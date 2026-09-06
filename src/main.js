@@ -8,7 +8,10 @@ let selectedId = 'p2';
 const history = new CommandHistory();
 let viewport;
 let transformMode = 'translate';
-const status = (message, error = false) => { $('#status').textContent = message; $('#status').classList.toggle('error', error); };
+const status = (message, error = false) => {
+  $('#status').textContent = !error && transformMode === 'resize' ? '面をドラッグしてサイズを変えます。' : message;
+  $('#status').classList.toggle('error', error);
+};
 function refresh() {
   if (!doc.parts.some(p => p.id === selectedId)) selectedId = null;
   viewport?.rebuild(doc, selectedId);
@@ -37,8 +40,10 @@ function refresh() {
 function select(id) { selectedId = id; refresh(); }
 function previewTransform(partId, transform) {
   if (partId !== selectedId) return;
-  const [key, values] = Object.entries(transform)[0];
-  document.querySelectorAll(`[data-vector="${key}"]`).forEach(input => { input.value = values[Number(input.dataset.axis)]; });
+  for (const [key, value] of Object.entries(transform)) {
+    if (Array.isArray(value)) document.querySelectorAll(`[data-vector="${key}"]`).forEach(input => { input.value = value[Number(input.dataset.axis)]; });
+    else document.querySelectorAll(`[data-scalar="${key}"]`).forEach(input => { input.value = value; });
+  }
 }
 function execute(command, nextSelection = selectedId) {
   try { doc = history.execute(doc, command); selectedId = nextSelection; refresh(); status('変更しました。JSON保存で作品を保存できます。'); }
@@ -47,8 +52,10 @@ function execute(command, nextSelection = selectedId) {
 function commitTransform(partId, transform) {
   const part = doc.parts.find(candidate => candidate.id === partId);
   if (!part) return;
-  const [key, values] = Object.entries(transform)[0];
-  if (values.every((value, index) => value === part[key][index])) return;
+  const changed = Object.entries(transform).some(([key, value]) => Array.isArray(value)
+    ? value.some((item, index) => item !== part[key][index])
+    : value !== part[key]);
+  if (!changed) return;
   execute({ type: 'setTransform', partId, transform });
 }
 function setTransformMode(mode) {
@@ -56,13 +63,18 @@ function setTransformMode(mode) {
   viewport?.setMode(mode);
   $('#mode-translate').setAttribute('aria-pressed', String(mode === 'translate'));
   $('#mode-rotate').setAttribute('aria-pressed', String(mode === 'rotate'));
+  $('#mode-resize').setAttribute('aria-pressed', String(mode === 'resize'));
+  if (mode === 'resize') status('面をドラッグしてサイズを変えます。');
+  else status(mode === 'translate' ? '移動ギズモでパーツを移動します。' : '回転ギズモでパーツを回転します。');
 }
 $('#mode-translate').addEventListener('click', () => setTransformMode('translate'));
 $('#mode-rotate').addEventListener('click', () => setTransformMode('rotate'));
+$('#mode-resize').addEventListener('click', () => setTransformMode('resize'));
 document.addEventListener('keydown', event => {
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
   if (event.key.toLowerCase() === 'w') setTransformMode('translate');
   else if (event.key.toLowerCase() === 'e') setTransformMode('rotate');
+  else if (event.key.toLowerCase() === 'r') setTransformMode('resize');
 });
 for (const [id, type] of [['#add-box', 'box'], ['#add-cylinder', 'cylinder']]) $(id).addEventListener('click', () => {
   const part = createPart(doc, type); execute({ type: 'addPart', part }, part.id);
