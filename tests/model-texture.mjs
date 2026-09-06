@@ -46,13 +46,13 @@ assert.deepEqual(['注ぎ口（根元）', '注ぎ口（中間）', '注ぎ口�
   const part = teapotPart(name);
   return [part.position, part.size, part.rotation];
 }), [
-  [[4, 4, 0], [3, 3, 3], [0, 0, 15]],
-  [[7, 5, 0], [3, 2, 2], [0, 0, 30]],
-  [[9, 7, 0], [3, 1, 1], [0, 0, 45]],
+  [[3, 4, 0], [2, 3, 3], [0, 0, 15]],
+  [[4, 5, 0], [2, 2, 2], [0, 0, 30]],
+  [[5, 6, 0], [2, 1, 1], [0, 0, 45]],
 ]);
-assert.ok(3 - rootEnds[0][0] > .4 && 3 - rootEnds[0][0] < .5, '注ぎ口の根元が本体側面へ浅く入る');
-assert.ok(distance2d(rootEnds[1], middleEnds[0]) < .3, '注ぎ口の根元と中間が接続する');
-assert.ok(distance2d(middleEnds[1], tipEnds[0]) < .5, '注ぎ口の中間と先端が接続する');
+assert.ok(3 - rootEnds[0][0] > .9 && 3 - rootEnds[0][0] < 1, '注ぎ口の根元が本体側面へ入る');
+assert.ok(distance2d(rootEnds[1], middleEnds[0]) < .9, '注ぎ口の根元と中間が接続する');
+assert.ok(distance2d(middleEnds[1], tipEnds[0]) < .7, '注ぎ口の中間と先端が接続する');
 assert.deepEqual(['取っ手（上）', '取っ手（外）', '取っ手（下）'].map(name => {
   const part = teapotPart(name);
   return [part.position, part.size, part.rotation];
@@ -82,7 +82,8 @@ const partBounds = teapot.parts.map(part => {
   return [[part.position[0] - halfX, part.position[1] - halfY, part.position[2] - part.size[2] / 2], [part.position[0] + halfX, part.position[1] + halfY, part.position[2] + part.size[2] / 2]];
 });
 const overallSize = [0, 1, 2].map(axis => Math.max(...partBounds.map(bounds => bounds[1][axis])) - Math.min(...partBounds.map(bounds => bounds[0][axis])));
-assert.ok(overallSize[0] <= 16 && overallSize[1] <= 14 && overallSize[2] <= 14, '全体が約16×14×14グリッド内に収まる');
+assert.ok(Math.max(...partBounds.slice(3, 6).map(bounds => bounds[1][0])) <= 7, '注ぎ口が本体中心からx=7以内に収まる');
+assert.ok(overallSize[0] <= 12 && overallSize[1] <= 14 && overallSize[2] <= 14, '全体が約12×14×14グリッド内に収まる');
 
 const box = { type: 'box', size: [4, 6, 2] };
 const boxLayout = textureLayout(box, 4);
