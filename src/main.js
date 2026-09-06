@@ -7,6 +7,7 @@ let doc = createSampleDoc();
 let selectedId = 'p2';
 const history = new CommandHistory();
 let viewport;
+let transformMode = 'translate';
 const status = (message, error = false) => { $('#status').textContent = message; $('#status').classList.toggle('error', error); };
 function refresh() {
   if (!doc.parts.some(p => p.id === selectedId)) selectedId = null;
@@ -34,19 +35,35 @@ function refresh() {
   document.querySelectorAll('[data-scalar]').forEach(input => { input.value = part[input.dataset.scalar]; });
 }
 function select(id) { selectedId = id; refresh(); }
-function previewPosition(partId, position) {
+function previewTransform(partId, transform) {
   if (partId !== selectedId) return;
-  document.querySelectorAll('[data-vector="position"]').forEach(input => { input.value = position[Number(input.dataset.axis)]; });
+  const [key, values] = Object.entries(transform)[0];
+  document.querySelectorAll(`[data-vector="${key}"]`).forEach(input => { input.value = values[Number(input.dataset.axis)]; });
 }
 function execute(command, nextSelection = selectedId) {
   try { doc = history.execute(doc, command); selectedId = nextSelection; refresh(); status('変更しました。JSON保存で作品を保存できます。'); }
   catch (error) { refresh(); status(error.message, true); }
 }
-function commitPosition(partId, position) {
+function commitTransform(partId, transform) {
   const part = doc.parts.find(candidate => candidate.id === partId);
-  if (!part || position.every((value, index) => value === part.position[index])) return;
-  execute({ type: 'setTransform', partId, transform: { position } });
+  if (!part) return;
+  const [key, values] = Object.entries(transform)[0];
+  if (values.every((value, index) => value === part[key][index])) return;
+  execute({ type: 'setTransform', partId, transform });
 }
+function setTransformMode(mode) {
+  transformMode = mode;
+  viewport?.setMode(mode);
+  $('#mode-translate').setAttribute('aria-pressed', String(mode === 'translate'));
+  $('#mode-rotate').setAttribute('aria-pressed', String(mode === 'rotate'));
+}
+$('#mode-translate').addEventListener('click', () => setTransformMode('translate'));
+$('#mode-rotate').addEventListener('click', () => setTransformMode('rotate'));
+document.addEventListener('keydown', event => {
+  if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+  if (event.key.toLowerCase() === 'w') setTransformMode('translate');
+  else if (event.key.toLowerCase() === 'e') setTransformMode('rotate');
+});
 for (const [id, type] of [['#add-box', 'box'], ['#add-cylinder', 'cylinder']]) $(id).addEventListener('click', () => {
   const part = createPart(doc, type); execute({ type: 'addPart', part }, part.id);
 });
@@ -85,5 +102,8 @@ $('#file-input').addEventListener('change', async event => {
   } catch (error) { status(`読込できませんでした：${error.message}`, true); }
   finally { event.target.value = ''; }
 });
-try { viewport = createViewport($('#viewport'), $('#canvas-host'), select, commitPosition, previewPosition); refresh(); }
+try {
+  viewport = createViewport($('#viewport'), $('#canvas-host'), select, commitTransform, previewTransform);
+  setTransformMode(transformMode); refresh();
+}
 catch (error) { refresh(); status(`3D表示を開始できませんでした：${error.message}`, true); }

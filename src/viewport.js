@@ -23,25 +23,33 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const transformHelper = transformControls.getHelper();
   transformControls.setMode('translate');
   transformControls.setTranslationSnap(1);
+  transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
   transformControls.addEventListener('change', render);
+  const normalizeDegrees = radians => ((Math.round(THREE.MathUtils.radToDeg(radians)) % 360) + 360) % 360;
+  const readTransform = (object, mode) => mode === 'rotate'
+    ? { rotation: object.rotation.toArray().slice(0, 3).map(normalizeDegrees) }
+    : { position: object.position.toArray().map(Math.round) };
   let dragStart = null;
   transformControls.addEventListener('dragging-changed', event => {
     controls.enabled = !event.value;
     if (event.value) {
       const object = transformControls.object;
-      dragStart = object ? { partId: object.userData.partId, position: object.position.toArray() } : null;
+      const mode = transformControls.getMode();
+      dragStart = object ? { partId: object.userData.partId, mode, transform: readTransform(object, mode) } : null;
       return;
     }
     const object = transformControls.object, finished = dragStart;
     dragStart = null;
     if (!object || !finished || object.userData.partId !== finished.partId) return;
-    const position = object.position.toArray().map(Math.round);
-    object.position.fromArray(position);
-    if (position.some((value, index) => value !== finished.position[index])) onTransformCommit(finished.partId, position);
+    const transform = readTransform(object, finished.mode);
+    if (transform.position) object.position.fromArray(transform.position);
+    else object.rotation.set(...transform.rotation.map(THREE.MathUtils.degToRad));
+    const key = Object.keys(transform)[0];
+    if (transform[key].some((value, index) => value !== finished.transform[key][index])) onTransformCommit(finished.partId, transform);
   });
   transformControls.addEventListener('objectChange', () => {
     const object = transformControls.object;
-    if (object) onTransformPreview(object.userData.partId, object.position.toArray().map(Math.round));
+    if (object) onTransformPreview(object.userData.partId, readTransform(object, transformControls.getMode()));
   });
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
   function rebuild(doc, selectedId) {
@@ -103,5 +111,12 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     raycaster.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1), camera);
     onSelect(raycaster.intersectObjects(pickable, false)[0]?.object.userData.partId ?? null);
   });
-  return { rebuild };
+  return {
+    rebuild,
+    setMode(mode) {
+      if (!['translate', 'rotate'].includes(mode)) return;
+      transformControls.setMode(mode);
+      render();
+    },
+  };
 }
