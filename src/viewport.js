@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createToonMaterial, createOutlineMaterial } from './materials.js';
-export function createViewport(container, host, onSelect) {
+export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview) {
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setSize(384, 216, false);
@@ -18,9 +19,36 @@ export function createViewport(container, host, onSelect) {
   let scene, pickable = [];
   const render = () => { if (scene) renderer.render(scene, camera); };
   controls.addEventListener('change', render);
+  const transformControls = new TransformControls(camera, renderer.domElement);
+  const transformHelper = transformControls.getHelper();
+  transformControls.setMode('translate');
+  transformControls.setTranslationSnap(1);
+  transformControls.addEventListener('change', render);
+  let dragStart = null;
+  transformControls.addEventListener('dragging-changed', event => {
+    controls.enabled = !event.value;
+    if (event.value) {
+      const object = transformControls.object;
+      dragStart = object ? { partId: object.userData.partId, position: object.position.toArray() } : null;
+      return;
+    }
+    const object = transformControls.object, finished = dragStart;
+    dragStart = null;
+    if (!object || !finished || object.userData.partId !== finished.partId) return;
+    const position = object.position.toArray().map(Math.round);
+    object.position.fromArray(position);
+    if (position.some((value, index) => value !== finished.position[index])) onTransformCommit(finished.partId, position);
+  });
+  transformControls.addEventListener('objectChange', () => {
+    const object = transformControls.object;
+    if (object) onTransformPreview(object.userData.partId, object.position.toArray().map(Math.round));
+  });
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
   function rebuild(doc, selectedId) {
     if (scene) {
+      // ギズモのGPU資源は再利用するため、旧シーンの破棄対象から外す。
+      transformControls.detach();
+      scene.remove(transformHelper);
       const geometries = new Set(), materials = new Set();
       scene.traverse(object => {
         if (object.geometry) geometries.add(object.geometry);
@@ -34,6 +62,7 @@ export function createViewport(container, host, onSelect) {
     const ambient = new THREE.AmbientLight('#ffffff', 0.18);
     scene.add(light, ambient);
     scene.add(new THREE.GridHelper(40 * doc.grid, 40, '#687988', '#3b4a57'));
+    let selectedMesh = null;
     for (const part of doc.parts) {
       const geometry = part.type === 'box' ? new THREE.BoxGeometry(...part.size) : new THREE.CylinderGeometry(part.radius, part.radius, part.height, part.segments, 1);
       const mesh = new THREE.Mesh(geometry, createToonMaterial(part.color, light, ambient));
@@ -43,7 +72,11 @@ export function createViewport(container, host, onSelect) {
       const outline = new THREE.Mesh(geometry, createOutlineMaterial(part.id === selectedId));
       outline.userData.partId = part.id;
       mesh.add(outline); scene.add(mesh); pickable.push(mesh);
+      if (part.id === selectedId) selectedMesh = mesh;
     }
+    scene.add(transformHelper);
+    if (selectedMesh) transformControls.attach(selectedMesh);
+    else transformControls.detach();
     render();
   }
   const resize = () => {
@@ -57,7 +90,10 @@ export function createViewport(container, host, onSelect) {
   resize();
   const raycaster = new THREE.Raycaster();
   let start = null;
-  renderer.domElement.addEventListener('pointerdown', event => { start = event.button === 0 ? { x: event.clientX, y: event.clientY, id: event.pointerId, dragged: false } : null; });
+  renderer.domElement.addEventListener('pointerdown', event => {
+    // TransformControls のリスナーが先に動くため、ギズモを掴んだクリックは選択判定に回さない。
+    start = event.button === 0 && !transformControls.dragging ? { x: event.clientX, y: event.clientY, id: event.pointerId, dragged: false } : null;
+  });
   renderer.domElement.addEventListener('pointermove', event => { if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) start.dragged = true; });
   renderer.domElement.addEventListener('pointercancel', () => { start = null; });
   renderer.domElement.addEventListener('pointerup', event => {

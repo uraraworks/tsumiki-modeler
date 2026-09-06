@@ -34,9 +34,18 @@ function refresh() {
   document.querySelectorAll('[data-scalar]').forEach(input => { input.value = part[input.dataset.scalar]; });
 }
 function select(id) { selectedId = id; refresh(); }
+function previewPosition(partId, position) {
+  if (partId !== selectedId) return;
+  document.querySelectorAll('[data-vector="position"]').forEach(input => { input.value = position[Number(input.dataset.axis)]; });
+}
 function execute(command, nextSelection = selectedId) {
   try { doc = history.execute(doc, command); selectedId = nextSelection; refresh(); status('変更しました。JSON保存で作品を保存できます。'); }
   catch (error) { refresh(); status(error.message, true); }
+}
+function commitPosition(partId, position) {
+  const part = doc.parts.find(candidate => candidate.id === partId);
+  if (!part || position.every((value, index) => value === part.position[index])) return;
+  execute({ type: 'setTransform', partId, transform: { position } });
 }
 for (const [id, type] of [['#add-box', 'box'], ['#add-cylinder', 'cylinder']]) $(id).addEventListener('click', () => {
   const part = createPart(doc, type); execute({ type: 'addPart', part }, part.id);
@@ -76,5 +85,5 @@ $('#file-input').addEventListener('change', async event => {
   } catch (error) { status(`読込できませんでした：${error.message}`, true); }
   finally { event.target.value = ''; }
 });
-try { viewport = createViewport($('#viewport'), $('#canvas-host'), select); refresh(); }
+try { viewport = createViewport($('#viewport'), $('#canvas-host'), select, commitPosition, previewPosition); refresh(); }
 catch (error) { refresh(); status(`3D表示を開始できませんでした：${error.message}`, true); }
