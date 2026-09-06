@@ -1,5 +1,4 @@
-import { cloneDoc, createBlankTexture, resizePartTexture, validateDoc } from './model.js';
-const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
+import { PALETTE_CHARS, cloneDoc, createBlankTexture, resizePartTexture, validateDoc } from './model.js';
 // 入力を変更せず、新しい検証済みドキュメントを返す。
 export function applyCommand(doc, cmd) {
   const next = cloneDoc(doc);

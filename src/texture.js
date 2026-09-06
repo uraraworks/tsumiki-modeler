@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createPartTexturePixels, textureLayout } from './model.js';
+import { PALETTE_CHARS, createPartTexturePixels, textureLayout } from './model.js';
 import { atlasPixelForVertex } from './uv-layout.js';
 
 const atlasUv = (x, y, width, height) => [x / width, 1 - y / height];

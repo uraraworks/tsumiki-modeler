@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { createPart, createPartTexturePixels, createSampleDoc, deserializeDoc, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, deserializeDoc, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
 
 const doc = createSampleDoc();
@@ -9,6 +9,16 @@ assert.deepEqual(doc.parts.map(part => part.name), ['頭', '胴', '左腕', '右
 for (const part of doc.parts) assert.doesNotThrow(() => createPartTexturePixels(part, doc.palette));
 assert.equal(doc.texelsPerUnit, 4);
 assert.deepEqual(textureLayout(doc.parts[0], 4).size, [64, 32]);
+
+const chest = createChestSampleDoc();
+assert.doesNotThrow(() => validateDoc(chest));
+assert.deepEqual(chest.parts.map(part => [part.name, part.size]), [
+  ['本体', [10, 6, 6]],
+  ['蓋', [10, 2, 8]],
+  ['錠前', [2, 2, 2]],
+]);
+assert.ok(chest.parts.every(part => part.type === 'box'));
+assert.ok(chest.parts.every(part => chest.palette.includes(part.color)));
 
 const box = { type: 'box', size: [4, 6, 2] };
 const boxLayout = textureLayout(box, 4);

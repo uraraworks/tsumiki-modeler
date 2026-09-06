@@ -1,4 +1,4 @@
-import { createSampleDoc, createPart, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
+import { PALETTE_CHARS, createSampleDoc, createChestSampleDoc, createPart, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 const $ = selector => document.querySelector(selector);
@@ -11,6 +11,7 @@ let transformMode = 'translate';
 let paintTool = 'pen';
 let paintColorIndex = 0;
 let renderedPalette = '';
+let activeSample = 'human';
 const status = (message, error = false) => {
   $('#status').textContent = message;
   $('#status').classList.toggle('error', error);
@@ -43,6 +44,8 @@ function refresh() {
   $('#delete').disabled = !part;
   $('#duplicate').disabled = !part; $('#mirror').disabled = !part;
   $('#undo').disabled = !history.past.length; $('#redo').disabled = !history.future.length;
+  $('#sample-human').setAttribute('aria-pressed', String(activeSample === 'human'));
+  $('#sample-chest').setAttribute('aria-pressed', String(activeSample === 'chest'));
   $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part;
   $('#part-type').textContent = part ? (part.type === 'box' ? '箱' : '円柱') : '';
   $('#uv-preview-section').hidden = !part;
@@ -55,7 +58,6 @@ function refresh() {
   document.querySelectorAll('[data-scalar]').forEach(input => { input.value = part[input.dataset.scalar]; });
   renderUvPreview(part);
 }
-const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
 function renderUvPreview(part) {
   const canvas = $('#uv-preview'), note = $('#uv-preview-note');
   const layout = textureLayout(part, doc.texelsPerUnit);
@@ -225,6 +227,17 @@ $('#mirror').addEventListener('click', () => duplicateSelected(true));
 $('#delete').addEventListener('click', () => execute({ type: 'removePart', partId: selectedId }, null));
 $('#undo').addEventListener('click', () => { doc = history.undo(doc); refresh(); status('元に戻しました。'); });
 $('#redo').addEventListener('click', () => { doc = history.redo(doc); refresh(); status('やり直しました。'); });
+function switchSample(sample) {
+  if (!confirm('編集中の内容は失われます。よろしいですか？')) return;
+  doc = sample === 'chest' ? createChestSampleDoc() : createSampleDoc();
+  activeSample = sample;
+  history.reset();
+  selectedId = doc.parts[0]?.id ?? null;
+  refresh();
+  status(`${sample === 'chest' ? '宝箱' : '人型'}サンプルに切り替えました。`);
+}
+$('#sample-human').addEventListener('click', () => switchSample('human'));
+$('#sample-chest').addEventListener('click', () => switchSample('chest'));
 $('#properties-form').addEventListener('submit', event => event.preventDefault());
 $('#properties-form').addEventListener('change', event => {
   const input = event.target, part = doc.parts.find(p => p.id === selectedId);
@@ -249,7 +262,7 @@ $('#file-input').addEventListener('change', async event => {
     if (file.size > 5 * 1024 * 1024) throw new Error('JSONは5MB以下にしてください。');
     const loaded = deserializeDoc(await file.text());
     // 読込は別ドキュメントへの切替。編集履歴を持ち越さない。
-    doc = loaded; history.reset(); selectedId = doc.parts[0]?.id ?? null; refresh(); status(`${file.name}を読み込みました。`);
+    doc = loaded; activeSample = null; history.reset(); selectedId = doc.parts[0]?.id ?? null; refresh(); status(`${file.name}を読み込みました。`);
   } catch (error) { status(`読込できませんでした：${error.message}`, true); }
   finally { event.target.value = ''; }
 });
@@ -262,4 +275,9 @@ try {
   });
   setTransformMode(transformMode); refresh();
 }
-catch (error) { refresh(); status(`3D表示を開始できませんでした：${error.message}`, true); }
+catch (error) {
+  // 部分初期化された viewport で同じ描画エラーを再発させない。
+  viewport = undefined;
+  refresh();
+  status(`3D表示を開始できませんでした：${error.message}`, true);
+}

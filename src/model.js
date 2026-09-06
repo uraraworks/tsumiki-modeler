@@ -2,7 +2,7 @@
 export const cloneDoc = (doc) => structuredClone(doc);
 export const DEFAULT_TEXELS_PER_UNIT = 4;
 export const DEFAULT_PALETTE = ['#e0a070', '#e8ce9e', '#c96c64', '#689caa', '#646f8c', '#849b69', '#b692bb', '#ece5d8'];
-const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
+export const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
 const integer = (value, min = -10000, max = 10000) => Number.isSafeInteger(value) && value >= min && value <= max;
 export function textureLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
   if (part.type === 'box') {
@@ -141,6 +141,28 @@ export function createSampleDoc() {
     ['右腕', [4, 7, 0], [2, 6, 2], '#e0a070'],
     ['左脚', [-2, 2, 0], [2, 4, 2], '#646f8c'],
     ['右脚', [2, 2, 0], [2, 4, 2], '#646f8c'],
+  ];
+  for (const [name, position, size, color] of samples) {
+    const part = { ...createPart(doc, 'box'), name, position, size, color };
+    part.texture = createBlankTexture(part, doc.texelsPerUnit);
+    doc.parts.push(part);
+  }
+  return validateDoc(doc);
+}
+export function createChestSampleDoc() {
+  const wood = '#8b5a2b', lightWood = '#a86f32', metal = '#d4a72c';
+  const doc = {
+    version: 1,
+    name: '宝箱サンプル',
+    grid: 1,
+    texelsPerUnit: DEFAULT_TEXELS_PER_UNIT,
+    palette: [...DEFAULT_PALETTE, wood, lightWood, metal],
+    parts: [],
+  };
+  const samples = [
+    ['本体', [0, 3, 0], [10, 6, 6], wood],
+    ['蓋', [0, 7, 0], [10, 2, 8], lightWood],
+    ['錠前', [0, 4, 3], [2, 2, 2], metal],
   ];
   for (const [name, position, size, color] of samples) {
     const part = { ...createPart(doc, 'box'), name, position, size, color };
