@@ -86,6 +86,7 @@ main {
 #viewport { flex: 1; min-height: 320px; background: #080b0e; border: 1px solid #353e48; overflow: auto; display: grid; place-items: center; }
 #canvas-host { min-width: 384px; min-height: 216px; display: flex; align-items: center; justify-content: center; }
 canvas { display: block; image-rendering: pixelated; touch-action: none; }
+#canvas-host canvas.paint-mode { cursor: crosshair; }
 .view-help { text-align: center; font-size: 11px; color: #8492a0; padding: 13px 0; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px 0; border-top: 1px solid #343b43; }
 button { font: inherit; color: inherit; border: 1px solid #46515c; background: #28313a; border-radius: 5px; padding: 9px 11px; cursor: pointer; }
@@ -118,6 +119,16 @@ input[type=color] { width: 55px; height: 34px; padding: 3px; }
 output { font-family: monospace; }
 #palette { display: flex; gap: 7px; margin-top: 12px; flex-wrap: wrap; }
 #palette button { width: 24px; height: 24px; padding: 0; border-radius: 3px; }
+#palette button[aria-pressed=true] { border-color: #fff2d8; box-shadow: 0 0 0 2px #f0bf78; }
+.paint-section { border-top: 1px solid #39414a; margin-top: 18px; padding-top: 16px; }
+.paint-section h3 { color: #c0cbd4; font-size: 11px; letter-spacing: .08em; margin: 0 0 10px; }
+.paint-tools { display: flex; gap: 6px; }
+.paint-tools button { flex: 1; padding: 7px 5px; font-size: 11px; }
+.paint-tools button[aria-pressed=true] { background: #526474; border-color: #f0bf78; color: #fff2d8; }
+.current-paint { display: flex; align-items: center; gap: 7px; margin-top: 12px; color: #a9b6c2; font-size: 11px; }
+#paint-color { width: 18px; height: 18px; border: 1px solid #d5dde5; border-radius: 3px; }
+#paint-color-value { margin-left: auto; }
+.paint-note { margin: 8px 0 0; color: #8595a3; font-size: 10px; }
 .uv-preview-section { border-top: 1px solid #39414a; margin-top: 18px; padding-top: 16px; }
 .uv-preview-section h3 { color: #c0cbd4; font-size: 11px; letter-spacing: .08em; margin: 0 0 10px; }
 .uv-preview-scroll { max-width: 100%; overflow: auto; padding: 7px; background: #11171c; border: 1px solid #3d4852; }

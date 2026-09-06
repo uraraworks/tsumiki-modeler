@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createToonMaterial, createOutlineMaterial } from './materials.js';
-import { applyAtlasUV, createPartCanvasTexture, textureSignature } from './texture.js';
-export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview) {
+import { createBlankTexture, textureLayout } from './model.js';
+import { applyAtlasUV, createPartCanvasTexture, textureSignature, updatePartCanvasTexturePixel } from './texture.js';
+export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview, paintHandlers = {}) {
+  const { onCommitPaint = () => {}, onHoverPaint = () => {}, onSamplePaint = () => {}, onPreviewPaint = () => {} } = paintHandlers;
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setSize(384, 216, false);
@@ -17,7 +19,9 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   controls.minDistance = 2;
   controls.maxDistance = 50000;
   controls.update();
+  const defaultMouseButtons = { ...controls.mouseButtons };
   let scene, pickable = [], mode = 'translate', selectedMesh = null, selectedPart = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
+  let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null;
   const textureCache = new Map();
   const handleWorldPosition = new THREE.Vector3();
   const render = () => {
@@ -94,6 +98,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   }
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
   function rebuild(doc, selectedId) {
+    finishPaintStroke(null, false);
     if (resizeDrag) finishResizeDrag(null, false);
     controls.enabled = true;
     if (scene) {
@@ -109,6 +114,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     }
     const activePartIds = new Set(doc.parts.map(part => part.id));
     for (const [partId, cached] of textureCache) if (!activePartIds.has(partId)) { cached.texture.dispose(); textureCache.delete(partId); }
+    currentDoc = doc;
     scene = new THREE.Scene(); pickable = []; resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; currentGrid = doc.grid;
     const light = new THREE.DirectionalLight('#ffffff', 1);
     light.position.set(-3, 8, 5);
@@ -136,7 +142,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       if (part.id === selectedId) { selectedMesh = mesh; selectedPart = part; }
     }
     scene.add(transformHelper);
-    if (selectedMesh && mode !== 'resize') transformControls.attach(selectedMesh);
+    if (selectedMesh && !['resize', 'paint'].includes(mode)) transformControls.attach(selectedMesh);
     else transformControls.detach();
     if (selectedMesh && mode === 'resize') createResizeHandles(selectedPart, selectedMesh);
     render();
@@ -262,6 +268,134 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   renderer.domElement.addEventListener('lostpointercapture', event => {
     if (resizeDrag?.pointerId === event.pointerId) finishResizeDrag(null, false);
   });
+  const faceNameForIntersection = (part, intersection) => {
+    const normal = intersection.face?.normal;
+    if (!normal) return null;
+    if (part.type === 'cylinder') return Math.abs(normal.y) < .5 ? 'side' : normal.y > 0 ? 'up' : 'down';
+    if (normal.x > .5) return 'right';
+    if (normal.x < -.5) return 'left';
+    if (normal.y > .5) return 'up';
+    if (normal.y < -.5) return 'down';
+    return normal.z > 0 ? 'front' : 'back';
+  };
+  function paintHit(event) {
+    setRayFromEvent(event);
+    const intersection = raycaster.intersectObjects(pickable, false)[0];
+    if (!intersection?.uv) return null;
+    const part = currentDoc.parts.find(candidate => candidate.id === intersection.object.userData.partId);
+    if (!part) return null;
+    const [width, height] = part.texture?.size ?? textureLayout(part, currentDoc.texelsPerUnit).size;
+    return {
+      part, mesh: intersection.object, face: faceNameForIntersection(part, intersection),
+      x: THREE.MathUtils.clamp(Math.floor(intersection.uv.x * width), 0, width - 1),
+      y: THREE.MathUtils.clamp(Math.floor((1 - intersection.uv.y) * height), 0, height - 1),
+    };
+  }
+  const linePixels = (from, to) => {
+    const pixels = [], dx = Math.abs(to.x - from.x), sx = from.x < to.x ? 1 : -1;
+    const dy = -Math.abs(to.y - from.y), sy = from.y < to.y ? 1 : -1;
+    let x = from.x, y = from.y, error = dx + dy;
+    while (true) {
+      pixels.push([x, y]);
+      if (x === to.x && y === to.y) break;
+      const twice = 2 * error;
+      if (twice >= dy) { error += dy; x += sx; }
+      if (twice <= dx) { error += dx; y += sy; }
+    }
+    return pixels;
+  };
+  function ensurePaintTexture(stroke) {
+    let cached = textureCache.get(stroke.part.id);
+    if (!cached) {
+      cached = { signature: null, texture: createPartCanvasTexture(stroke.previewPart, currentDoc.palette) };
+      textureCache.set(stroke.part.id, cached);
+      stroke.mesh.material.uniforms.colorMap.value = cached.texture;
+      stroke.mesh.material.uniforms.useMap.value = true;
+      stroke.mesh.material.needsUpdate = true;
+    }
+    return cached;
+  }
+  function paintAt(stroke, hit) {
+    const sideWidth = stroke.part.type === 'cylinder' ? textureLayout(stroke.part, currentDoc.texelsPerUnit).faces.side[2] : 0;
+    const continuousFace = stroke.previous?.face && stroke.previous.face === hit.face
+      && !(hit.face === 'side' && Math.abs(stroke.previous.x - hit.x) > sideWidth / 2);
+    const points = continuousFace ? linePixels(stroke.previous, hit) : [[hit.x, hit.y]];
+    const cached = ensurePaintTexture(stroke);
+    const changed = [];
+    for (const [x, y] of points) {
+      if (stroke.previewPart.texture.rows[y][x] === stroke.character) continue;
+      stroke.previewPart.texture.rows[y] = `${stroke.previewPart.texture.rows[y].slice(0, x)}${stroke.character}${stroke.previewPart.texture.rows[y].slice(x + 1)}`;
+      stroke.pixels.set(`${x},${y}`, [x, y, stroke.character]);
+      updatePartCanvasTexturePixel(cached.texture, stroke.previewPart, currentDoc.palette, x, y, stroke.character);
+      changed.push([x, y, stroke.character]);
+    }
+    stroke.previous = { x: hit.x, y: hit.y, face: hit.face };
+    if (changed.length) { onPreviewPaint(stroke.part.id, changed); render(); }
+  }
+  function finishPaintStroke(event, commit) {
+    const stroke = paintStroke;
+    if (!stroke || (event && stroke.pointerId !== event.pointerId)) return;
+    paintStroke = null;
+    if (renderer.domElement.hasPointerCapture(stroke.pointerId)) renderer.domElement.releasePointerCapture(stroke.pointerId);
+    const cached = textureCache.get(stroke.part.id);
+    if (commit && stroke.pixels.size) {
+      if (cached) cached.signature = textureSignature(stroke.previewPart, currentDoc.palette);
+      onCommitPaint({ type: 'paintPixels', partId: stroke.part.id, pixels: [...stroke.pixels.values()] });
+    } else if (cached && (stroke.pixels.size || !stroke.part.texture)) {
+      cached.texture.dispose();
+      if (stroke.part.texture) {
+        cached.texture = createPartCanvasTexture(stroke.part, currentDoc.palette);
+        cached.signature = textureSignature(stroke.part, currentDoc.palette);
+        stroke.mesh.material.uniforms.colorMap.value = cached.texture;
+        stroke.mesh.material.uniforms.useMap.value = true;
+      } else {
+        textureCache.delete(stroke.part.id);
+        stroke.mesh.material.uniforms.colorMap.value = null;
+        stroke.mesh.material.uniforms.useMap.value = false;
+      }
+    }
+    render();
+  }
+  renderer.domElement.addEventListener('pointerdown', event => {
+    if (mode !== 'paint' || event.button !== 0) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    const hit = paintHit(event);
+    if (!hit) return;
+    const effectiveTool = event.altKey ? 'eyedropper' : paintTool;
+    if (effectiveTool === 'eyedropper') {
+      onSamplePaint(hit.part.id, hit.part.texture?.rows[hit.y][hit.x] ?? '.');
+      return;
+    }
+    renderer.domElement.setPointerCapture(event.pointerId);
+    const previewPart = structuredClone(hit.part);
+    if (!previewPart.texture) previewPart.texture = createBlankTexture(previewPart, currentDoc.texelsPerUnit);
+    paintStroke = { pointerId: event.pointerId, part: hit.part, mesh: hit.mesh, previewPart, character: effectiveTool === 'eraser' ? '.' : paintCharacter, pixels: new Map(), previous: null };
+    paintAt(paintStroke, hit);
+  }, true);
+  renderer.domElement.addEventListener('pointermove', event => {
+    if (mode !== 'paint') return;
+    const hit = paintHit(event);
+    onHoverPaint(hit ? { partId: hit.part.id, x: hit.x, y: hit.y } : null);
+    if (!paintStroke || paintStroke.pointerId !== event.pointerId) {
+      if (paintStroke) paintStroke.previous = null;
+      return;
+    }
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!hit || hit.part.id !== paintStroke.part.id) { paintStroke.previous = null; return; }
+    paintAt(paintStroke, hit);
+  }, true);
+  renderer.domElement.addEventListener('pointerup', event => {
+    if (!paintStroke || paintStroke.pointerId !== event.pointerId) return;
+    event.preventDefault(); event.stopImmediatePropagation(); finishPaintStroke(event, true);
+  }, true);
+  renderer.domElement.addEventListener('pointercancel', event => {
+    if (paintStroke?.pointerId !== event.pointerId) return;
+    event.stopImmediatePropagation(); finishPaintStroke(event, false);
+  }, true);
+  renderer.domElement.addEventListener('lostpointercapture', event => {
+    if (paintStroke?.pointerId === event.pointerId) finishPaintStroke(null, true);
+  });
+  renderer.domElement.addEventListener('pointerleave', () => { if (mode === 'paint' && !paintStroke) onHoverPaint(null); });
   let start = null;
   renderer.domElement.addEventListener('pointerdown', event => {
     // TransformControls のリスナーが先に動くため、ギズモを掴んだクリックは選択判定に回さない。
@@ -278,19 +412,29 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   return {
     rebuild,
     setMode(nextMode) {
-      if (!['translate', 'rotate', 'resize'].includes(nextMode)) return;
+      if (!['translate', 'rotate', 'resize', 'paint'].includes(nextMode)) return;
       finishResizeDrag(null, false);
+      finishPaintStroke(null, false);
       mode = nextMode;
+      controls.mouseButtons = nextMode === 'paint'
+        ? { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }
+        : { ...defaultMouseButtons };
+      renderer.domElement.classList.toggle('paint-mode', nextMode === 'paint');
       if (nextMode === 'resize') {
         transformControls.detach();
         if (selectedMesh && !handleGroup) createResizeHandles(selectedPart, selectedMesh);
       }
+      else if (nextMode === 'paint') transformControls.detach();
       else {
         transformControls.setMode(nextMode);
         if (selectedMesh) transformControls.attach(selectedMesh);
       }
       if (handleGroup) handleGroup.visible = nextMode === 'resize';
       render();
+    },
+    setPaintSettings(tool, character) {
+      if (['pen', 'eraser', 'eyedropper'].includes(tool)) paintTool = tool;
+      if (typeof character === 'string' && character.length === 1) paintCharacter = character;
     },
   };
 }

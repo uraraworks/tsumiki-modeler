@@ -8,6 +8,8 @@ let selectedId = 'p2';
 const history = new CommandHistory();
 let viewport;
 let transformMode = 'translate';
+let paintTool = 'pen';
+let paintColorIndex = 0;
 let renderedPalette = '';
 const status = (message, error = false) => {
   $('#status').textContent = message;
@@ -20,12 +22,15 @@ function refresh() {
   const paletteKey = JSON.stringify(doc.palette);
   if (paletteKey !== renderedPalette) {
     renderedPalette = paletteKey;
-    $('#palette').replaceChildren(...doc.palette.map(color => {
+    $('#palette').replaceChildren(...doc.palette.map((color, index) => {
       const button = document.createElement('button'); button.type = 'button'; button.style.backgroundColor = color; button.setAttribute('aria-label', `色を${color}に変更`);
-      button.addEventListener('click', () => { if (selectedId) execute({ type: 'setColor', partId: selectedId, color }); });
+      button.dataset.index = index;
+      button.addEventListener('click', () => setPaintColor(index));
       return button;
     }));
   }
+  if (paintColorIndex >= doc.palette.length) paintColorIndex = 0;
+  updatePaintUi();
   $('#part-list').replaceChildren(...doc.parts.map(part => {
     const li = document.createElement('li'), button = document.createElement('button');
     button.type = 'button'; button.setAttribute('aria-pressed', String(part.id === selectedId));
@@ -79,6 +84,18 @@ function renderUvPreview(part) {
     const labelWidth = context.measureText(name).width + 5;
     context.fillStyle = 'rgba(15,20,25,.7)'; context.fillRect(left + (drawnWidth - labelWidth) / 2, top + (drawnHeight - 11) / 2, labelWidth, 11);
     context.fillStyle = '#f1f5f8'; context.fillText(name, left + drawnWidth / 2, top + drawnHeight / 2);
+  }
+}
+function previewPaintPixels(partId, pixels) {
+  if (partId !== selectedId) return;
+  const part = doc.parts.find(candidate => candidate.id === partId);
+  const canvas = $('#uv-preview');
+  if (!part || canvas.hidden) return;
+  const [width] = textureLayout(part, doc.texelsPerUnit).size;
+  const scale = canvas.width / width, context = canvas.getContext('2d');
+  for (const [x, y, character] of pixels) {
+    context.fillStyle = character === '.' ? part.color : doc.palette[PALETTE_CHARS.indexOf(character)];
+    context.fillRect(x * scale, y * scale, scale, scale);
   }
 }
 function select(id) { selectedId = id; refresh(); }
@@ -139,12 +156,56 @@ function setTransformMode(mode) {
   $('#mode-translate').setAttribute('aria-pressed', String(mode === 'translate'));
   $('#mode-rotate').setAttribute('aria-pressed', String(mode === 'rotate'));
   $('#mode-resize').setAttribute('aria-pressed', String(mode === 'resize'));
+  $('#mode-paint').setAttribute('aria-pressed', String(mode === 'paint'));
+  $('#view-help').textContent = mode === 'paint'
+    ? '左ドラッグ：描く　／　右ドラッグ：回転　／　中ドラッグ：移動　／　ホイール：ズーム　／　Alt＋クリック：スポイト'
+    : '左ドラッグ：回転　／　右ドラッグ：移動　／　ホイール：ズーム　／　W：移動　／　E：回転　／　R：リサイズ　／　P：ペイント';
   if (mode === 'resize') status('面をドラッグしてサイズを変えます。');
+  else if (mode === 'paint') status('モデルを左ドラッグして1ドットずつ描きます。');
   else status(mode === 'translate' ? '移動ギズモでパーツを移動します。' : '回転ギズモでパーツを回転します。');
 }
 $('#mode-translate').addEventListener('click', () => setTransformMode('translate'));
 $('#mode-rotate').addEventListener('click', () => setTransformMode('rotate'));
 $('#mode-resize').addEventListener('click', () => setTransformMode('resize'));
+$('#mode-paint').addEventListener('click', () => setTransformMode('paint'));
+function updatePaintUi() {
+  const color = doc.palette[paintColorIndex];
+  $('#paint-color').style.backgroundColor = color;
+  $('#paint-color-value').textContent = color;
+  document.querySelectorAll('#palette button').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.index) === paintColorIndex)));
+  for (const tool of ['pen', 'eraser', 'eyedropper']) $(`#paint-${tool}`).setAttribute('aria-pressed', String(paintTool === tool));
+  viewport?.setPaintSettings(paintTool, PALETTE_CHARS[paintColorIndex]);
+}
+function setPaintColor(index) {
+  paintColorIndex = index;
+  updatePaintUi();
+  status(`描画色を ${doc.palette[index]} にしました。`);
+}
+function setPaintTool(tool) {
+  paintTool = tool; updatePaintUi();
+  status({ pen: 'ペンで現在色を描きます。', eraser: '消しゴムでパーツ色へ戻します。', eyedropper: 'モデル上の色をクリックして取得します。' }[tool]);
+}
+for (const tool of ['pen', 'eraser', 'eyedropper']) $(`#paint-${tool}`).addEventListener('click', () => setPaintTool(tool));
+function samplePaintColor(partId, character) {
+  const part = doc.parts.find(candidate => candidate.id === partId);
+  if (!part) return;
+  if (character !== '.') paintColorIndex = PALETTE_CHARS.indexOf(character);
+  else {
+    const rgb = hex => [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+    const source = rgb(part.color);
+    paintColorIndex = doc.palette.reduce((best, color, index) => {
+      const candidate = rgb(color), distance = candidate.reduce((sum, value, channel) => sum + (value - source[channel]) ** 2, 0);
+      return distance < best.distance ? { index, distance } : best;
+    }, { index: 0, distance: Infinity }).index;
+  }
+  updatePaintUi(); status(`スポイトで ${doc.palette[paintColorIndex]} を取得しました。`);
+}
+function showPaintHover(hit) {
+  if (transformMode !== 'paint') return;
+  if (!hit) { status('モデルを左ドラッグして1ドットずつ描きます。'); return; }
+  const part = doc.parts.find(candidate => candidate.id === hit.partId);
+  if (part) status(`${part.name} (${hit.x}, ${hit.y})`);
+}
 document.addEventListener('keydown', event => {
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
@@ -153,6 +214,7 @@ document.addEventListener('keydown', event => {
   } else if (event.key.toLowerCase() === 'w') setTransformMode('translate');
   else if (event.key.toLowerCase() === 'e') setTransformMode('rotate');
   else if (event.key.toLowerCase() === 'r') setTransformMode('resize');
+  else if (event.key.toLowerCase() === 'p') setTransformMode('paint');
 });
 for (const [id, type] of [['#add-box', 'box'], ['#add-cylinder', 'cylinder']]) $(id).addEventListener('click', () => {
   if (!hasPartCapacity()) return;
@@ -192,7 +254,12 @@ $('#file-input').addEventListener('change', async event => {
   finally { event.target.value = ''; }
 });
 try {
-  viewport = createViewport($('#viewport'), $('#canvas-host'), select, commitTransform, previewTransform);
+  viewport = createViewport($('#viewport'), $('#canvas-host'), select, commitTransform, previewTransform, {
+    onCommitPaint: command => execute(command, command.partId, 'ペイントしました。'),
+    onHoverPaint: showPaintHover,
+    onSamplePaint: samplePaintColor,
+    onPreviewPaint: previewPaintPixels,
+  });
   setTransformMode(transformMode); refresh();
 }
 catch (error) { refresh(); status(`3D表示を開始できませんでした：${error.message}`, true); }

@@ -81,4 +81,25 @@ assert.deepEqual(history.undo(changed), source);
 assert.deepEqual(history.redo(source), changed);
 assert.deepEqual(deserializeDoc(serializeDoc(changed)), changed);
 
+const paintSource = structuredClone(source);
+const paintCommand = { type: 'paintPixels', partId: textured.id, pixels: [[2, 3, '1'], [2, 3, '2'], [4, 5, '3']] };
+const paintCommandBefore = structuredClone(paintCommand);
+const painted = applyCommand(paintSource, paintCommand);
+assert.equal(painted.parts[0].texture.rows[3][2], '2', '同じ座標では最後の値を採用する');
+assert.equal(painted.parts[0].texture.rows[5][4], '3');
+assert.deepEqual(paintCommand, paintCommandBefore, 'コマンド入力を書き換えない');
+assert.deepEqual(paintSource, source, '元のdocを書き換えない');
+
+const paintHistory = new CommandHistory();
+const oncePainted = paintHistory.execute(paintSource, paintCommand);
+assert.equal(paintHistory.past.length, 1, '1ストロークを履歴1件にする');
+assert.deepEqual(paintHistory.undo(oncePainted), paintSource, 'Undoでストローク前へ戻る');
+const unchanged = paintHistory.execute(paintSource, { type: 'paintPixels', partId: textured.id, pixels: [[0, 0, '1'], [0, 0, '1']] });
+assert.equal(unchanged, paintSource, '変化がないときは元のdocを返す');
+assert.equal(paintHistory.past.length, 0, '変化がないときは履歴を発行しない');
+const textureless = { ...doc, parts: [{ ...structuredClone(textured), texture: undefined }] };
+const erasedBlank = new CommandHistory();
+assert.equal(erasedBlank.execute(textureless, { type: 'paintPixels', partId: textured.id, pixels: [[0, 0, '.']] }), textureless);
+assert.equal(erasedBlank.past.length, 0, 'textureなしの空ピクセル消去も履歴を発行しない');
+
 console.log('model texture tests: OK');

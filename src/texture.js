@@ -51,6 +51,15 @@ export function createPartCanvasTexture(part, palette) {
   return texture;
 }
 
+export function updatePartCanvasTexturePixel(texture, part, palette, x, y, character) {
+  const canvas = texture?.image;
+  if (!canvas || x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
+  const context = canvas.getContext('2d');
+  context.fillStyle = character === '.' ? part.color : palette[PALETTE_CHARS.indexOf(character)];
+  context.fillRect(x, y, 1, 1);
+  texture.needsUpdate = true;
+}
+
 export function textureSignature(part, palette) {
   return part.texture ? JSON.stringify([part.texture, part.color, palette]) : null;
 }
