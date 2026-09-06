@@ -21,6 +21,40 @@ export function createPart(doc, type) {
   while (doc.parts.some(p => p.id === `p${number}`)) number++;
   return { id: `p${number}`, name: `${type === 'box' ? '箱' : '円柱'} ${number}`, type, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: 8, rotation: [0, 0, 0], color: '#e0a070' };
 }
+function uniquePartName(doc, preferredName) {
+  const names = new Set(doc.parts.map(part => part.name));
+  if (!names.has(preferredName)) return preferredName;
+  for (let number = 2; ; number++) {
+    const suffix = ` ${number}`;
+    const base = preferredName.slice(0, 100 - suffix.length).trimEnd();
+    const candidate = `${base}${suffix}`;
+    if (!names.has(candidate)) return candidate;
+  }
+}
+function mirroredName(name) {
+  let matched = false;
+  let result = name.replace(/[左右]/g, side => {
+    matched = true;
+    return side === '左' ? '右' : '左';
+  });
+  result = result.replace(/_(left|right|l|r)$/, suffix => {
+    matched = true;
+    return { _left: '_right', _right: '_left', _l: '_r', _r: '_l' }[suffix];
+  });
+  return { name: result, matched };
+}
+export function duplicatePart(doc, source) {
+  return { ...structuredClone(source), id: createPart(doc, source.type).id, name: uniquePartName(doc, source.name) };
+}
+export function mirrorPart(doc, source) {
+  const swapped = mirroredName(source.name);
+  const copy = duplicatePart(doc, source);
+  copy.name = uniquePartName(doc, swapped.matched ? swapped.name : source.name);
+  copy.position[0] = -copy.position[0];
+  copy.rotation[1] = ((-copy.rotation[1] % 360) + 360) % 360;
+  copy.rotation[2] = ((-copy.rotation[2] % 360) + 360) % 360;
+  return copy;
+}
 export function createSampleDoc() {
   const doc = { version: 1, name: 'untitled', grid: 1, parts: [] };
   const samples = [

@@ -1,4 +1,4 @@
-import { createSampleDoc, createPart, serializeDoc, deserializeDoc } from './model.js';
+import { createSampleDoc, createPart, duplicatePart, mirrorPart, serializeDoc, deserializeDoc } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 const $ = selector => document.querySelector(selector);
@@ -9,7 +9,7 @@ const history = new CommandHistory();
 let viewport;
 let transformMode = 'translate';
 const status = (message, error = false) => {
-  $('#status').textContent = !error && transformMode === 'resize' ? '面をドラッグしてサイズを変えます。' : message;
+  $('#status').textContent = message;
   $('#status').classList.toggle('error', error);
 };
 function refresh() {
@@ -26,6 +26,7 @@ function refresh() {
   }));
   const part = doc.parts.find(p => p.id === selectedId);
   $('#delete').disabled = !part;
+  $('#duplicate').disabled = !part; $('#mirror').disabled = !part;
   $('#undo').disabled = !history.past.length; $('#redo').disabled = !history.future.length;
   $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part;
   $('#part-type').textContent = part ? (part.type === 'box' ? '箱' : '円柱') : '';
@@ -45,9 +46,28 @@ function previewTransform(partId, transform) {
     else document.querySelectorAll(`[data-scalar="${key}"]`).forEach(input => { input.value = value; });
   }
 }
-function execute(command, nextSelection = selectedId) {
-  try { doc = history.execute(doc, command); selectedId = nextSelection; refresh(); status('変更しました。JSON保存で作品を保存できます。'); }
+function execute(command, nextSelection = selectedId, successMessage = '変更しました。JSON保存で作品を保存できます。') {
+  try { doc = history.execute(doc, command); selectedId = nextSelection; refresh(); status(successMessage); }
   catch (error) { refresh(); status(error.message, true); }
+}
+function hasPartCapacity() {
+  if (doc.parts.length < 1000) return true;
+  status('パーツ数の上限（1000個）に達しています。', true);
+  return false;
+}
+function duplicateSelected(mirror = false) {
+  const source = doc.parts.find(part => part.id === selectedId);
+  if (!source || !hasPartCapacity()) return;
+  if (mirror && source.position[0] === 0) {
+    status('中心にあるパーツはミラーできません');
+    return;
+  }
+  const part = mirror ? mirrorPart(doc, source) : duplicatePart(doc, source);
+  execute(
+    { type: 'addPart', part },
+    part.id,
+    mirror ? `${part.name} を作りました` : `${source.name} を複製しました`,
+  );
 }
 function commitTransform(partId, transform) {
   const part = doc.parts.find(candidate => candidate.id === partId);
@@ -72,13 +92,19 @@ $('#mode-rotate').addEventListener('click', () => setTransformMode('rotate'));
 $('#mode-resize').addEventListener('click', () => setTransformMode('resize'));
 document.addEventListener('keydown', event => {
   if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
-  if (event.key.toLowerCase() === 'w') setTransformMode('translate');
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
+    event.preventDefault();
+    duplicateSelected();
+  } else if (event.key.toLowerCase() === 'w') setTransformMode('translate');
   else if (event.key.toLowerCase() === 'e') setTransformMode('rotate');
   else if (event.key.toLowerCase() === 'r') setTransformMode('resize');
 });
 for (const [id, type] of [['#add-box', 'box'], ['#add-cylinder', 'cylinder']]) $(id).addEventListener('click', () => {
+  if (!hasPartCapacity()) return;
   const part = createPart(doc, type); execute({ type: 'addPart', part }, part.id);
 });
+$('#duplicate').addEventListener('click', () => duplicateSelected());
+$('#mirror').addEventListener('click', () => duplicateSelected(true));
 $('#delete').addEventListener('click', () => execute({ type: 'removePart', partId: selectedId }, null));
 $('#undo').addEventListener('click', () => { doc = history.undo(doc); refresh(); status('元に戻しました。'); });
 $('#redo').addEventListener('click', () => { doc = history.redo(doc); refresh(); status('やり直しました。'); });
