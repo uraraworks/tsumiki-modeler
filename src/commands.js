@@ -1,4 +1,4 @@
-import { cloneDoc, validateDoc } from './model.js';
+import { cloneDoc, resizePartTexture, validateDoc } from './model.js';
 // 入力を変更せず、新しい検証済みドキュメントを返す。
 export function applyCommand(doc, cmd) {
   const next = cloneDoc(doc);
@@ -14,6 +14,8 @@ export function applyCommand(doc, cmd) {
           if (!['position', 'size', 'rotation', 'radius', 'height', 'segments'].includes(key)) throw new Error('未対応の変形プロパティです。');
           part[key] = structuredClone(value);
         }
+        // 不正な巨大値で行列を確保する前に、従来の上限検証へ回す。
+        if ((part.type === 'box' ? part.size : [part.radius, part.height]).every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000)) resizePartTexture(part, next.texelsPerUnit);
         break;
       case 'setColor': part.color = cmd.color; break;
       case 'rename': part.name = cmd.name; break;

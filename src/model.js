@@ -1,8 +1,76 @@
 // ModelDoc だけを永続化し、描画用オブジェクトは含めない。
 export const cloneDoc = (doc) => structuredClone(doc);
+export const DEFAULT_TEXELS_PER_UNIT = 4;
+export const DEFAULT_PALETTE = ['#e0a070', '#e8ce9e', '#c96c64', '#689caa', '#646f8c', '#849b69', '#b692bb', '#ece5d8'];
+const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
 const integer = (value, min = -10000, max = 10000) => Number.isSafeInteger(value) && value >= min && value <= max;
+export function textureLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  if (part.type === 'box') {
+    const [w, h, d] = part.size.map(value => value * texelsPerUnit);
+    return {
+      size: [2 * (d + w), d + h],
+      faces: {
+        up: [d, 0, w, d], down: [d + w, 0, w, d],
+        right: [0, d, d, h], front: [d, d, w, h],
+        left: [d + w, d, d, h], back: [2 * d + w, d, w, h],
+      },
+    };
+  }
+  const diameter = part.radius * 2 * texelsPerUnit;
+  const circumference = Math.max(1, Math.ceil(2 * Math.PI * part.radius * texelsPerUnit));
+  const sideHeight = part.height * texelsPerUnit;
+  return {
+    size: [Math.max(circumference, diameter * 2), diameter + sideHeight],
+    faces: {
+      up: [0, 0, diameter, diameter], down: [diameter, 0, diameter, diameter],
+      side: [0, diameter, circumference, sideHeight],
+    },
+  };
+}
+export function createBlankTexture(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  const [width, height] = textureLayout(part, texelsPerUnit).size;
+  return { size: [width, height], rows: Array(height).fill('.'.repeat(width)) };
+}
+// Canvas に依存しないテクスチャ生成部分。旧形式では texture 自体が存在しない。
+export function createPartTexturePixels(part, palette) {
+  if (!part || part.texture === undefined) return null;
+  const texture = part.texture;
+  if (!texture) return null;
+  const [width, height] = texture.size;
+  return {
+    size: [width, height],
+    pixels: texture.rows.flatMap(row => [...row].map(character => character === '.' ? null : palette[PALETTE_CHARS.indexOf(character)])),
+  };
+}
+export function resizePartTexture(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  if (!part.texture) return false;
+  const [width, height] = textureLayout(part, texelsPerUnit).size;
+  const [oldWidth, oldHeight] = part.texture.size;
+  if (width === oldWidth && height === oldHeight) return false;
+  let pixelsLost = false;
+  if (width < oldWidth || height < oldHeight) {
+    for (let y = 0; y < oldHeight; y++) for (let x = 0; x < oldWidth; x++) {
+      if ((x >= width || y >= height) && part.texture.rows[y][x] !== '.') pixelsLost = true;
+    }
+  }
+  part.texture = {
+    size: [width, height],
+    rows: Array.from({ length: height }, (_, y) => {
+      const copied = y < oldHeight ? part.texture.rows[y].slice(0, width) : '';
+      return copied.padEnd(width, '.');
+    }),
+  };
+  return pixelsLost;
+}
+function withDefaults(value) {
+  const doc = cloneDoc(value);
+  if (!doc || typeof doc !== 'object') return doc;
+  if (doc.texelsPerUnit === undefined) doc.texelsPerUnit = DEFAULT_TEXELS_PER_UNIT;
+  if (doc.palette === undefined) doc.palette = [...DEFAULT_PALETTE];
+  return doc;
+}
 export function validateDoc(doc) {
-  if (!doc || doc.version !== 1 || typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100 || !integer(doc.grid, 1) || !Array.isArray(doc.parts) || doc.parts.length > 1000) throw new Error('対応していないModelDocです。version・名前・グリッド・パーツ数を確認してください。');
+  if (!doc || doc.version !== 1 || typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100 || !integer(doc.grid, 1) || !integer(doc.texelsPerUnit, 1, 64) || !Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36 || !doc.palette.every(color => /^#[0-9a-f]{6}$/i.test(color)) || !Array.isArray(doc.parts) || doc.parts.length > 1000) throw new Error('対応していないModelDocです。version・名前・グリッド・テクスチャ設定・パーツ数を確認してください。');
   const ids = new Set();
   for (const part of doc.parts) {
     if (!part || typeof part.id !== 'string' || !part.id || part.id.length > 100 || ids.has(part.id)) throw new Error('パーツIDが空か重複しています。');
@@ -12,6 +80,13 @@ export function validateDoc(doc) {
       if (!Array.isArray(part[key]) || part[key].length !== 3 || !part[key].every(v => integer(v, key === 'size' ? 1 : -10000))) throw new Error('座標・回転は−10000〜10000の整数、サイズは1〜10000の整数にしてください。');
     }
     if (!integer(part.radius, 1) || !integer(part.height, 1) || !integer(part.segments, 3, 64) || !/^#[0-9a-f]{6}$/i.test(part.color)) throw new Error('半径・高さ・分割数・色が不正です（分割数は3〜64）。');
+    if (part.texture !== undefined) {
+      const expected = textureLayout(part, doc.texelsPerUnit).size;
+      const texture = part.texture;
+      if (!texture || !Array.isArray(texture.size) || texture.size.length !== 2 || texture.size.some((value, index) => value !== expected[index]) || !Array.isArray(texture.rows) || texture.rows.length !== expected[1] || texture.rows.some(row => typeof row !== 'string' || row.length !== expected[0])) throw new Error(`${part.name}のテクスチャ寸法または行数が不正です。`);
+      const allowed = new Set(`.${PALETTE_CHARS.slice(0, doc.palette.length)}`);
+      if (texture.rows.some(row => [...row].some(character => !allowed.has(character)))) throw new Error(`${part.name}のテクスチャにパレット範囲外の文字があります。`);
+    }
   }
   return doc;
 }
@@ -19,7 +94,9 @@ export function createPart(doc, type) {
   if (!['box', 'cylinder'].includes(type)) throw new Error('未対応のパーツです。');
   let number = 1;
   while (doc.parts.some(p => p.id === `p${number}`)) number++;
-  return { id: `p${number}`, name: `${type === 'box' ? '箱' : '円柱'} ${number}`, type, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: 8, rotation: [0, 0, 0], color: '#e0a070' };
+  const part = { id: `p${number}`, name: `${type === 'box' ? '箱' : '円柱'} ${number}`, type, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: 8, rotation: [0, 0, 0], color: '#e0a070' };
+  part.texture = createBlankTexture(part, doc.texelsPerUnit ?? DEFAULT_TEXELS_PER_UNIT);
+  return part;
 }
 function uniquePartName(doc, preferredName) {
   const names = new Set(doc.parts.map(part => part.name));
@@ -56,7 +133,7 @@ export function mirrorPart(doc, source) {
   return copy;
 }
 export function createSampleDoc() {
-  const doc = { version: 1, name: 'untitled', grid: 1, parts: [] };
+  const doc = { version: 1, name: 'untitled', grid: 1, texelsPerUnit: DEFAULT_TEXELS_PER_UNIT, palette: [...DEFAULT_PALETTE], parts: [] };
   const samples = [
     ['頭', [0, 12, 0], [4, 4, 4], '#e0a070'],
     ['胴', [0, 7, 0], [4, 6, 2], '#689caa'],
@@ -65,8 +142,12 @@ export function createSampleDoc() {
     ['左脚', [-2, 2, 0], [2, 4, 2], '#646f8c'],
     ['右脚', [2, 2, 0], [2, 4, 2], '#646f8c'],
   ];
-  for (const [name, position, size, color] of samples) doc.parts.push({ ...createPart(doc, 'box'), name, position, size, color });
+  for (const [name, position, size, color] of samples) {
+    const part = { ...createPart(doc, 'box'), name, position, size, color };
+    part.texture = createBlankTexture(part, doc.texelsPerUnit);
+    doc.parts.push(part);
+  }
   return validateDoc(doc);
 }
 export const serializeDoc = doc => JSON.stringify(validateDoc(doc), null, 2);
-export const deserializeDoc = text => cloneDoc(validateDoc(JSON.parse(text)));
+export const deserializeDoc = text => validateDoc(withDefaults(JSON.parse(text)));

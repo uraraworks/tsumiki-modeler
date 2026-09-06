@@ -1,4 +1,4 @@
-import { createSampleDoc, createPart, duplicatePart, mirrorPart, serializeDoc, deserializeDoc } from './model.js';
+import { createSampleDoc, createPart, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 const $ = selector => document.querySelector(selector);
@@ -8,6 +8,7 @@ let selectedId = 'p2';
 const history = new CommandHistory();
 let viewport;
 let transformMode = 'translate';
+let renderedPalette = '';
 const status = (message, error = false) => {
   $('#status').textContent = message;
   $('#status').classList.toggle('error', error);
@@ -16,6 +17,15 @@ function refresh() {
   if (!doc.parts.some(p => p.id === selectedId)) selectedId = null;
   viewport?.rebuild(doc, selectedId);
   $('#part-count').textContent = `${doc.parts.length} 個`;
+  const paletteKey = JSON.stringify(doc.palette);
+  if (paletteKey !== renderedPalette) {
+    renderedPalette = paletteKey;
+    $('#palette').replaceChildren(...doc.palette.map(color => {
+      const button = document.createElement('button'); button.type = 'button'; button.style.backgroundColor = color; button.setAttribute('aria-label', `色を${color}に変更`);
+      button.addEventListener('click', () => { if (selectedId) execute({ type: 'setColor', partId: selectedId, color }); });
+      return button;
+    }));
+  }
   $('#part-list').replaceChildren(...doc.parts.map(part => {
     const li = document.createElement('li'), button = document.createElement('button');
     button.type = 'button'; button.setAttribute('aria-pressed', String(part.id === selectedId));
@@ -30,6 +40,7 @@ function refresh() {
   $('#undo').disabled = !history.past.length; $('#redo').disabled = !history.future.length;
   $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part;
   $('#part-type').textContent = part ? (part.type === 'box' ? '箱' : '円柱') : '';
+  $('#uv-preview-section').hidden = !part;
   if (!part) return;
   $('#part-name').value = part.name;
   $('#part-color').value = part.color; $('#color-value').textContent = part.color;
@@ -37,6 +48,38 @@ function refresh() {
   $('#cylinder-fields').hidden = part.type !== 'cylinder'; $('#cylinder-fields').disabled = part.type !== 'cylinder';
   document.querySelectorAll('[data-vector]').forEach(input => { input.value = part[input.dataset.vector][Number(input.dataset.axis)]; });
   document.querySelectorAll('[data-scalar]').forEach(input => { input.value = part[input.dataset.scalar]; });
+  renderUvPreview(part);
+}
+const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
+function renderUvPreview(part) {
+  const canvas = $('#uv-preview'), note = $('#uv-preview-note');
+  const layout = textureLayout(part, doc.texelsPerUnit);
+  const [width, height] = layout.size;
+  const scale = Math.max(1, Math.min(8, Math.floor(246 / width)));
+  if (width * scale > 8192 || height * scale > 8192 || width * height * scale * scale > 16000000) {
+    canvas.hidden = true; note.textContent = `${width} × ${height}px（プレビューには大きすぎます）`; return;
+  }
+  canvas.hidden = false; note.textContent = `${width} × ${height}px · ${doc.texelsPerUnit}px/グリッド`;
+  canvas.width = width * scale; canvas.height = height * scale;
+  const context = canvas.getContext('2d');
+  context.fillStyle = part.color; context.fillRect(0, 0, canvas.width, canvas.height);
+  if (part.texture) for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const character = part.texture.rows[y][x];
+    if (character === '.') continue;
+    context.fillStyle = doc.palette[PALETTE_CHARS.indexOf(character)];
+    context.fillRect(x * scale, y * scale, scale, scale);
+  }
+  context.lineWidth = 1; context.strokeStyle = 'rgba(225,235,244,.75)';
+  context.font = '10px system-ui, sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle';
+  for (const [name, [x, y, faceWidth, faceHeight]] of Object.entries(layout.faces)) {
+    const left = x * scale, top = y * scale, drawnWidth = faceWidth * scale, drawnHeight = faceHeight * scale;
+    if (part.type === 'cylinder' && name !== 'side') {
+      context.beginPath(); context.ellipse(left + drawnWidth / 2, top + drawnHeight / 2, drawnWidth / 2 - .5, drawnHeight / 2 - .5, 0, 0, Math.PI * 2); context.stroke();
+    } else context.strokeRect(left + .5, top + .5, drawnWidth - 1, drawnHeight - 1);
+    const labelWidth = context.measureText(name).width + 5;
+    context.fillStyle = 'rgba(15,20,25,.7)'; context.fillRect(left + (drawnWidth - labelWidth) / 2, top + (drawnHeight - 11) / 2, labelWidth, 11);
+    context.fillStyle = '#f1f5f8'; context.fillText(name, left + drawnWidth / 2, top + drawnHeight / 2);
+  }
 }
 function select(id) { selectedId = id; refresh(); }
 function previewTransform(partId, transform) {
@@ -46,8 +89,20 @@ function previewTransform(partId, transform) {
     else document.querySelectorAll(`[data-scalar="${key}"]`).forEach(input => { input.value = value; });
   }
 }
-function execute(command, nextSelection = selectedId, successMessage = '変更しました。JSON保存で作品を保存できます。') {
-  try { doc = history.execute(doc, command); selectedId = nextSelection; refresh(); status(successMessage); }
+function execute(command, nextSelection = selectedId, successMessage = null) {
+  try {
+    let pixelsLost = false;
+    if (command.type === 'setTransform') {
+      const original = doc.parts.find(part => part.id === command.partId);
+      if (original?.texture) {
+        const preview = structuredClone(original);
+        Object.assign(preview, structuredClone(command.transform));
+        pixelsLost = resizePartTexture(preview, doc.texelsPerUnit);
+      }
+    }
+    doc = history.execute(doc, command); selectedId = nextSelection; refresh();
+    status(pixelsLost ? 'サイズ縮小により、転写範囲外のテクスチャ内容が消えました。' : (successMessage ?? '変更しました。JSON保存で作品を保存できます。'));
+  }
   catch (error) { refresh(); status(error.message, true); }
 }
 function hasPartCapacity() {
@@ -120,10 +175,6 @@ $('#properties-form').addEventListener('change', event => {
     execute({ type: 'setTransform', partId: part.id, transform: { [key]: value } });
   } else if (input.dataset.scalar) execute({ type: 'setTransform', partId: part.id, transform: { [input.dataset.scalar]: Number(input.value) } });
 });
-for (const color of ['#e0a070', '#e8ce9e', '#c96c64', '#689caa', '#646f8c', '#849b69', '#b692bb', '#ece5d8']) {
-  const button = document.createElement('button'); button.type = 'button'; button.style.backgroundColor = color; button.setAttribute('aria-label', `色を${color}に変更`);
-  button.addEventListener('click', () => execute({ type: 'setColor', partId: selectedId, color })); $('#palette').append(button);
-}
 $('#save').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([serializeDoc(doc)], { type: 'application/json' }));
   const link = document.createElement('a'); link.href = url; link.download = `${doc.name.replace(/[\\/:*?"<>|]/g, '_')}.json`;

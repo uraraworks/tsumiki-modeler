@@ -1,24 +1,30 @@
 import * as THREE from 'three';
-export function createToonMaterial(color, light, ambient) {
+export function createToonMaterial(color, light, ambient, map = null) {
   return new THREE.ShaderMaterial({
-    uniforms: { baseColor: { value: new THREE.Color(color) }, lightDirection: { value: light.position.clone().normalize() }, ambientStrength: { value: ambient.intensity }, lightStrength: { value: light.intensity } },
+    uniforms: { baseColor: { value: new THREE.Color(color) }, colorMap: { value: map }, useMap: { value: !!map }, lightDirection: { value: light.position.clone().normalize() }, ambientStrength: { value: ambient.intensity }, lightStrength: { value: light.intensity } },
     vertexShader: `
       varying vec3 vNormal;
+      varying vec2 vUv;
       void main() {
         vNormal = normalize(normalMatrix * normal);
+        vUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: `
       uniform vec3 baseColor;
+      uniform sampler2D colorMap;
+      uniform bool useMap;
       uniform vec3 lightDirection;
       uniform float ambientStrength;
       uniform float lightStrength;
       varying vec3 vNormal;
+      varying vec2 vUv;
       void main() {
         vec3 direction = normalize((viewMatrix * vec4(lightDirection, 0.0)).xyz);
         float nDotL = max(dot(normalize(vNormal), direction), 0.0);
         float band = nDotL > 0.65 ? 0.82 : (nDotL > 0.2 ? 0.55 : 0.28);
-        gl_FragColor = vec4(baseColor * min(ambientStrength + band * lightStrength, 1.0), 1.0);
+        vec4 textureColor = useMap ? texture2D(colorMap, vUv) : vec4(baseColor, 1.0);
+        gl_FragColor = vec4(textureColor.rgb * min(ambientStrength + band * lightStrength, 1.0), textureColor.a);
         #include <colorspace_fragment>
       }`,
   });

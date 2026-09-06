@@ -50,6 +50,7 @@
           <fieldset id="cylinder-fields"><legend>円柱</legend><div class="triple"><label>半径<input type="number" step="1" min="1" required data-scalar="radius"></label><label>高さ<input type="number" step="1" min="1" required data-scalar="height"></label><label>分割数<input type="number" step="1" min="3" max="64" required data-scalar="segments"></label></div></fieldset>
           <fieldset><legend>回転（度）</legend><div class="triple"><label>X<input type="number" step="1" required data-vector="rotation" data-axis="0"></label><label>Y<input type="number" step="1" required data-vector="rotation" data-axis="1"></label><label>Z<input type="number" step="1" required data-vector="rotation" data-axis="2"></label></div></fieldset>
           <label>色<div class="color-row"><input id="part-color" type="color"><output id="color-value"></output></div></label><div id="palette" aria-label="カラーパレット"></div>
+          <section id="uv-preview-section" class="uv-preview-section" aria-labelledby="uv-preview-title"><h3 id="uv-preview-title">UV 展開図</h3><div class="uv-preview-scroll"><canvas id="uv-preview" aria-label="選択パーツのUV展開図"></canvas></div><p id="uv-preview-note"></p></section>
         </form>
       </section>
     </aside>

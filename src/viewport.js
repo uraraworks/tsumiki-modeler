@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createToonMaterial, createOutlineMaterial } from './materials.js';
+import { applyAtlasUV, createPartCanvasTexture, textureSignature } from './texture.js';
 export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview) {
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
@@ -17,6 +18,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   controls.maxDistance = 50000;
   controls.update();
   let scene, pickable = [], mode = 'translate', selectedMesh = null, selectedPart = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
+  const textureCache = new Map();
   const handleWorldPosition = new THREE.Vector3();
   const render = () => {
     if (!scene) return;
@@ -105,6 +107,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       });
       geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose());
     }
+    const activePartIds = new Set(doc.parts.map(part => part.id));
+    for (const [partId, cached] of textureCache) if (!activePartIds.has(partId)) { cached.texture.dispose(); textureCache.delete(partId); }
     scene = new THREE.Scene(); pickable = []; resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; currentGrid = doc.grid;
     const light = new THREE.DirectionalLight('#ffffff', 1);
     light.position.set(-3, 8, 5);
@@ -113,7 +117,16 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     scene.add(new THREE.GridHelper(40 * doc.grid, 40, '#687988', '#3b4a57'));
     for (const part of doc.parts) {
       const geometry = part.type === 'box' ? new THREE.BoxGeometry(...part.size) : new THREE.CylinderGeometry(part.radius, part.radius, part.height, part.segments, 1);
-      const mesh = new THREE.Mesh(geometry, createToonMaterial(part.color, light, ambient));
+      applyAtlasUV(geometry, part, doc.texelsPerUnit);
+      const signature = textureSignature(part, doc.palette);
+      let cached = textureCache.get(part.id);
+      if (!signature && cached) { cached.texture.dispose(); textureCache.delete(part.id); cached = null; }
+      else if (signature && cached && cached.signature !== signature) { cached.texture.dispose(); textureCache.delete(part.id); cached = null; }
+      if (signature && !cached) {
+        cached = { signature, texture: createPartCanvasTexture(part, doc.palette) };
+        textureCache.set(part.id, cached);
+      }
+      const mesh = new THREE.Mesh(geometry, createToonMaterial(part.color, light, ambient, cached?.texture));
       mesh.position.fromArray(part.position);
       mesh.rotation.set(...part.rotation.map(THREE.MathUtils.degToRad));
       mesh.userData.partId = part.id;
