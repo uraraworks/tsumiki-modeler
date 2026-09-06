@@ -1,4 +1,4 @@
-import { PALETTE_CHARS, createSampleDoc, createChestSampleDoc, createPart, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
+import { PALETTE_CHARS, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 const $ = selector => document.querySelector(selector);
@@ -46,6 +46,7 @@ function refresh() {
   $('#undo').disabled = !history.past.length; $('#redo').disabled = !history.future.length;
   $('#sample-human').setAttribute('aria-pressed', String(activeSample === 'human'));
   $('#sample-chest').setAttribute('aria-pressed', String(activeSample === 'chest'));
+  $('#sample-teapot').setAttribute('aria-pressed', String(activeSample === 'teapot'));
   $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part;
   $('#part-type').textContent = part ? (part.type === 'box' ? '箱' : '円柱') : '';
   $('#uv-preview-section').hidden = !part;
@@ -228,15 +229,22 @@ $('#undo').addEventListener('click', () => { doc = history.undo(doc); refresh();
 $('#redo').addEventListener('click', () => { doc = history.redo(doc); refresh(); status('やり直しました。'); });
 function switchSample(sample) {
   if (!confirm('編集中の内容は失われます。よろしいですか？')) return;
-  doc = sample === 'chest' ? createChestSampleDoc() : createSampleDoc();
+  const samples = {
+    human: [createSampleDoc, '人型'],
+    chest: [createChestSampleDoc, '宝箱'],
+    teapot: [createTeapotSampleDoc, 'ティーポット'],
+  };
+  const [createDoc, label] = samples[sample];
+  doc = createDoc();
   activeSample = sample;
   history.reset();
   selectedId = doc.parts[0]?.id ?? null;
   refresh();
-  status(`${sample === 'chest' ? '宝箱' : '人型'}サンプルに切り替えました。`);
+  status(`${label}サンプルに切り替えました。`);
 }
 $('#sample-human').addEventListener('click', () => switchSample('human'));
 $('#sample-chest').addEventListener('click', () => switchSample('chest'));
+$('#sample-teapot').addEventListener('click', () => switchSample('teapot'));
 $('#properties-form').addEventListener('submit', event => event.preventDefault());
 $('#properties-form').addEventListener('change', event => {
   const input = event.target, part = doc.parts.find(p => p.id === selectedId);

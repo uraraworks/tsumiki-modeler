@@ -171,5 +171,33 @@ export function createChestSampleDoc() {
   }
   return validateDoc(doc);
 }
+export function createTeapotSampleDoc() {
+  const porcelain = '#ece5d8', accent = '#c96c64';
+  const doc = {
+    version: 1,
+    name: 'ティーポットサンプル',
+    grid: 1,
+    texelsPerUnit: DEFAULT_TEXELS_PER_UNIT,
+    palette: [...DEFAULT_PALETTE],
+    parts: [],
+  };
+  const samples = [
+    { name: '本体', type: 'cylinder', position: [0, 4, 0], radius: 3, height: 6, segments: 10, color: porcelain },
+    { name: '蓋', type: 'cylinder', position: [0, 7, 0], radius: 2, height: 1, segments: 10, color: accent },
+    { name: 'つまみ', type: 'cylinder', position: [0, 8, 0], radius: 1, height: 2, segments: 8, color: accent },
+    { name: '注ぎ口（根元）', type: 'box', position: [4, 5, 0], size: [4, 2, 2], rotation: [0, 0, 30], color: porcelain },
+    { name: '注ぎ口（先端）', type: 'box', position: [6, 7, 0], size: [4, 1, 2], rotation: [0, 0, 30], color: porcelain },
+    { name: '取っ手（上）', type: 'box', position: [-4, 6, 0], size: [4, 1, 2], rotation: [0, 0, -30], color: porcelain },
+    { name: '取っ手（外）', type: 'box', position: [-6, 4, 0], size: [1, 6, 2], color: porcelain },
+    { name: '取っ手（下）', type: 'box', position: [-4, 2, 0], size: [4, 1, 2], rotation: [0, 0, 30], color: porcelain },
+  ];
+  for (const sample of samples) {
+    const { name, type, ...properties } = sample;
+    const part = { ...createPart(doc, type), name, ...properties };
+    part.texture = createBlankTexture(part, doc.texelsPerUnit);
+    doc.parts.push(part);
+  }
+  return validateDoc(doc);
+}
 export const serializeDoc = doc => JSON.stringify(validateDoc(doc), null, 2);
 export const deserializeDoc = text => validateDoc(withDefaults(JSON.parse(text)));

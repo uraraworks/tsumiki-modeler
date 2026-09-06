@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, deserializeDoc, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
 
 const doc = createSampleDoc();
@@ -19,6 +19,16 @@ assert.deepEqual(chest.parts.map(part => [part.name, part.size]), [
 ]);
 assert.ok(chest.parts.every(part => part.type === 'box'));
 assert.ok(chest.parts.every(part => chest.palette.includes(part.color)));
+
+const teapot = createTeapotSampleDoc();
+assert.doesNotThrow(() => validateDoc(teapot));
+assert.deepEqual(teapot.parts.map(part => part.name), [
+  '本体', '蓋', 'つまみ', '注ぎ口（根元）', '注ぎ口（先端）', '取っ手（上）', '取っ手（外）', '取っ手（下）',
+]);
+assert.ok(teapot.parts.every(part => ['box', 'cylinder'].includes(part.type)));
+assert.ok(teapot.parts.every(part => part.rotation.every(angle => angle % 15 === 0)));
+assert.ok(teapot.parts.every(part => teapot.palette.includes(part.color)));
+assert.ok(teapot.parts.every(part => part.texture.rows.every(row => /^\.+$/.test(row))));
 
 const box = { type: 'box', size: [4, 6, 2] };
 const boxLayout = textureLayout(box, 4);
