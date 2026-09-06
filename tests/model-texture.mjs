@@ -23,12 +23,66 @@ assert.ok(chest.parts.every(part => chest.palette.includes(part.color)));
 const teapot = createTeapotSampleDoc();
 assert.doesNotThrow(() => validateDoc(teapot));
 assert.deepEqual(teapot.parts.map(part => part.name), [
-  '本体', '蓋', 'つまみ', '注ぎ口（根元）', '注ぎ口（先端）', '取っ手（上）', '取っ手（外）', '取っ手（下）',
+  '本体', '蓋', 'つまみ', '注ぎ口（根元）', '注ぎ口（中間）', '注ぎ口（先端）', '取っ手（上）', '取っ手（外）', '取っ手（下）',
 ]);
 assert.ok(teapot.parts.every(part => ['box', 'cylinder'].includes(part.type)));
 assert.ok(teapot.parts.every(part => part.rotation.every(angle => angle % 15 === 0)));
 assert.ok(teapot.parts.every(part => teapot.palette.includes(part.color)));
 assert.ok(teapot.parts.every(part => part.texture.rows.every(row => /^\.+$/.test(row))));
+const teapotPart = name => teapot.parts.find(part => part.name === name);
+const boxEndpoints = (part) => {
+  const angle = part.rotation[2] * Math.PI / 180;
+  const offset = [part.size[0] / 2 * Math.cos(angle), part.size[0] / 2 * Math.sin(angle)];
+  return [
+    [part.position[0] - offset[0], part.position[1] - offset[1]],
+    [part.position[0] + offset[0], part.position[1] + offset[1]],
+  ];
+};
+const distance2d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const rootEnds = boxEndpoints(teapotPart('注ぎ口（根元）'));
+const middleEnds = boxEndpoints(teapotPart('注ぎ口（中間）'));
+const tipEnds = boxEndpoints(teapotPart('注ぎ口（先端）'));
+assert.deepEqual(['注ぎ口（根元）', '注ぎ口（中間）', '注ぎ口（先端）'].map(name => {
+  const part = teapotPart(name);
+  return [part.position, part.size, part.rotation];
+}), [
+  [[4, 4, 0], [3, 3, 3], [0, 0, 15]],
+  [[7, 5, 0], [3, 2, 2], [0, 0, 30]],
+  [[9, 7, 0], [3, 1, 1], [0, 0, 45]],
+]);
+assert.ok(3 - rootEnds[0][0] > .4 && 3 - rootEnds[0][0] < .5, '注ぎ口の根元が本体側面へ浅く入る');
+assert.ok(distance2d(rootEnds[1], middleEnds[0]) < .3, '注ぎ口の根元と中間が接続する');
+assert.ok(distance2d(middleEnds[1], tipEnds[0]) < .5, '注ぎ口の中間と先端が接続する');
+assert.deepEqual(['取っ手（上）', '取っ手（外）', '取っ手（下）'].map(name => {
+  const part = teapotPart(name);
+  return [part.position, part.size, part.rotation];
+}), [
+  [[-4, 6, 0], [3, 1, 2], [0, 0, -30]],
+  [[-5, 4, 0], [1, 5, 2], [0, 0, 0]],
+  [[-4, 2, 0], [3, 1, 2], [0, 0, 30]],
+]);
+for (const name of ['取っ手（上）', '取っ手（下）']) {
+  const [, bodyEnd] = boxEndpoints(teapotPart(name));
+  assert.ok(bodyEnd[0] + 3 > .25 && bodyEnd[0] + 3 < .4, `${name}が本体側面へ浅く入る`);
+  assert.ok(bodyEnd[1] >= 1 && bodyEnd[1] <= 7, `${name}が本体の高さ内で接続する`);
+}
+const handleOuter = teapotPart('取っ手（外）');
+const upperOuterEnd = boxEndpoints(teapotPart('取っ手（上）'))[0];
+const lowerOuterEnd = boxEndpoints(teapotPart('取っ手（下）'))[0];
+assert.ok(Math.abs(upperOuterEnd[0] - handleOuter.position[0]) < handleOuter.size[0] / 2 && upperOuterEnd[1] - (handleOuter.position[1] + handleOuter.size[1] / 2) < .5, '取っ手上部と外側が接続する');
+assert.ok(Math.abs(lowerOuterEnd[0] - handleOuter.position[0]) < handleOuter.size[0] / 2 && (handleOuter.position[1] - handleOuter.size[1] / 2) - lowerOuterEnd[1] < .5, '取っ手下部と外側が接続する');
+const body = teapotPart('本体'), lid = teapotPart('蓋'), knob = teapotPart('つまみ');
+assert.equal(body.position[1] + body.height / 2 - (lid.position[1] - lid.height / 2), .5, '蓋が本体上面へ0.5重なる');
+assert.equal(lid.position[1] + lid.height / 2 - (knob.position[1] - knob.height / 2), .5, 'つまみが蓋上面へ0.5重なる');
+const partBounds = teapot.parts.map(part => {
+  if (part.type === 'cylinder') return [[part.position[0] - part.radius, part.position[1] - part.height / 2, part.position[2] - part.radius], [part.position[0] + part.radius, part.position[1] + part.height / 2, part.position[2] + part.radius]];
+  const angle = part.rotation[2] * Math.PI / 180;
+  const halfX = Math.abs(part.size[0] / 2 * Math.cos(angle)) + Math.abs(part.size[1] / 2 * Math.sin(angle));
+  const halfY = Math.abs(part.size[0] / 2 * Math.sin(angle)) + Math.abs(part.size[1] / 2 * Math.cos(angle));
+  return [[part.position[0] - halfX, part.position[1] - halfY, part.position[2] - part.size[2] / 2], [part.position[0] + halfX, part.position[1] + halfY, part.position[2] + part.size[2] / 2]];
+});
+const overallSize = [0, 1, 2].map(axis => Math.max(...partBounds.map(bounds => bounds[1][axis])) - Math.min(...partBounds.map(bounds => bounds[0][axis])));
+assert.ok(overallSize[0] <= 16 && overallSize[1] <= 14 && overallSize[2] <= 14, '全体が約16×14×14グリッド内に収まる');
 
 const box = { type: 'box', size: [4, 6, 2] };
 const boxLayout = textureLayout(box, 4);

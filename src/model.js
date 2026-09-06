@@ -185,11 +185,12 @@ export function createTeapotSampleDoc() {
     { name: '本体', type: 'cylinder', position: [0, 4, 0], radius: 3, height: 6, segments: 10, color: porcelain },
     { name: '蓋', type: 'cylinder', position: [0, 7, 0], radius: 2, height: 1, segments: 10, color: accent },
     { name: 'つまみ', type: 'cylinder', position: [0, 8, 0], radius: 1, height: 2, segments: 8, color: accent },
-    { name: '注ぎ口（根元）', type: 'box', position: [4, 5, 0], size: [4, 2, 2], rotation: [0, 0, 30], color: porcelain },
-    { name: '注ぎ口（先端）', type: 'box', position: [6, 7, 0], size: [4, 1, 2], rotation: [0, 0, 30], color: porcelain },
-    { name: '取っ手（上）', type: 'box', position: [-4, 6, 0], size: [4, 1, 2], rotation: [0, 0, -30], color: porcelain },
-    { name: '取っ手（外）', type: 'box', position: [-6, 4, 0], size: [1, 6, 2], color: porcelain },
-    { name: '取っ手（下）', type: 'box', position: [-4, 2, 0], size: [4, 1, 2], rotation: [0, 0, 30], color: porcelain },
+    { name: '注ぎ口（根元）', type: 'box', position: [4, 4, 0], size: [3, 3, 3], rotation: [0, 0, 15], color: porcelain },
+    { name: '注ぎ口（中間）', type: 'box', position: [7, 5, 0], size: [3, 2, 2], rotation: [0, 0, 30], color: porcelain },
+    { name: '注ぎ口（先端）', type: 'box', position: [9, 7, 0], size: [3, 1, 1], rotation: [0, 0, 45], color: porcelain },
+    { name: '取っ手（上）', type: 'box', position: [-4, 6, 0], size: [3, 1, 2], rotation: [0, 0, -30], color: porcelain },
+    { name: '取っ手（外）', type: 'box', position: [-5, 4, 0], size: [1, 5, 2], color: porcelain },
+    { name: '取っ手（下）', type: 'box', position: [-4, 2, 0], size: [3, 1, 2], rotation: [0, 0, 30], color: porcelain },
   ];
   for (const sample of samples) {
     const { name, type, ...properties } = sample;
