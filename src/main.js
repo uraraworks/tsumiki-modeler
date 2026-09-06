@@ -191,8 +191,14 @@ for (const tool of ['pen', 'eraser', 'eyedropper']) $(`#paint-${tool}`).addEvent
 function samplePaintColor(partId, character) {
   const part = doc.parts.find(candidate => candidate.id === partId);
   if (!part) return;
-  if (character === '.') { status('未指定色（パーツ色）のため、現在色は変更しませんでした。'); return; }
+  if (character === '.') {
+    paintTool = 'eraser';
+    updatePaintUi();
+    status('未指定色を取得しました。消しゴムに切り替えます。');
+    return;
+  }
   paintColorIndex = PALETTE_CHARS.indexOf(character);
+  if (paintTool === 'eraser') paintTool = 'pen';
   updatePaintUi(); status(`スポイトで ${doc.palette[paintColorIndex]} を取得しました。`);
 }
 function showPaintHover(hit) {

@@ -13,6 +13,18 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   renderer.setClearColor('#242e39');
   host.append(renderer.domElement);
   renderer.domElement.setAttribute('aria-label', '3Dモデル。ドラッグで回転、クリックでパーツを選択');
+  const activePointerIds = new Set(), endingPointerIds = new Set(), cancellingPointerIds = new Set();
+  renderer.domElement.addEventListener('pointerdown', event => activePointerIds.add(event.pointerId), true);
+  renderer.domElement.addEventListener('pointerup', event => {
+    activePointerIds.delete(event.pointerId);
+    endingPointerIds.add(event.pointerId);
+    queueMicrotask(() => endingPointerIds.delete(event.pointerId));
+  }, true);
+  renderer.domElement.addEventListener('pointercancel', event => {
+    activePointerIds.delete(event.pointerId);
+    cancellingPointerIds.add(event.pointerId);
+    queueMicrotask(() => cancellingPointerIds.delete(event.pointerId));
+  }, true);
   const camera = new THREE.PerspectiveCamera(38, 384 / 216, 0.1, 100000);
   camera.position.set(18, 16, 23);
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -266,14 +278,6 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     event.preventDefault(); event.stopImmediatePropagation();
     finishResizeDrag(event, true);
   }, true);
-  renderer.domElement.addEventListener('pointercancel', event => {
-    if (!resizeDrag || resizeDrag.pointerId !== event.pointerId) return;
-    event.stopImmediatePropagation();
-    finishResizeDrag(event, false);
-  }, true);
-  renderer.domElement.addEventListener('lostpointercapture', event => {
-    if (resizeDrag?.pointerId === event.pointerId) finishResizeDrag(null, false);
-  });
   const faceNameForIntersection = (part, intersection) => {
     const normal = intersection.face?.normal;
     if (!normal) return null;
@@ -394,13 +398,6 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     if (!paintStroke || paintStroke.pointerId !== event.pointerId) return;
     event.preventDefault(); event.stopImmediatePropagation(); finishPaintStroke(event, true);
   }, true);
-  renderer.domElement.addEventListener('pointercancel', event => {
-    if (paintStroke?.pointerId !== event.pointerId) return;
-    event.stopImmediatePropagation(); finishPaintStroke(event, false);
-  }, true);
-  renderer.domElement.addEventListener('lostpointercapture', event => {
-    if (paintStroke?.pointerId === event.pointerId) finishPaintStroke(null, true);
-  });
   renderer.domElement.addEventListener('pointerleave', () => { if (mode === 'paint' && !paintStroke) onHoverPaint(null); });
   renderer.domElement.addEventListener('pointerdown', event => {
     if (mode !== 'paint' || event.button !== 2) return;
@@ -408,9 +405,6 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   });
   renderer.domElement.addEventListener('pointermove', event => {
     if (paintSampleStart && Math.hypot(event.clientX - paintSampleStart.x, event.clientY - paintSampleStart.y) > clickDragThreshold) paintSampleStart.dragged = true;
-  });
-  renderer.domElement.addEventListener('pointercancel', event => {
-    if (paintSampleStart?.id === event.pointerId) paintSampleStart = null;
   });
   renderer.domElement.addEventListener('pointerup', event => {
     const down = paintSampleStart;
@@ -420,23 +414,50 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const hit = paintHit(event);
     if (hit) onSamplePaint(hit.part.id, hit.part.texture?.rows[hit.y][hit.x] ?? '.');
   });
-  // OrbitControls 自身の抑止は非ペイント時だけ遮り、通常のコンテキストメニューを残す。
-  renderer.domElement.addEventListener('contextmenu', event => {
-    if (mode === 'paint') event.preventDefault();
-    else event.stopImmediatePropagation();
-  }, true);
+  // 3Dビューでは全モードで右ボタンを操作に使うため、ブラウザメニューは表示しない。
+  renderer.domElement.addEventListener('contextmenu', event => event.preventDefault(), true);
   let start = null;
   renderer.domElement.addEventListener('pointerdown', event => {
     // TransformControls のリスナーが先に動くため、ギズモを掴んだクリックは選択判定に回さない。
     start = event.button === 0 && !transformControls.dragging ? { x: event.clientX, y: event.clientY, id: event.pointerId, dragged: false } : null;
   });
   renderer.domElement.addEventListener('pointermove', event => { if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > clickDragThreshold) start.dragged = true; });
-  renderer.domElement.addEventListener('pointercancel', () => { start = null; });
   renderer.domElement.addEventListener('pointerup', event => {
     const down = start; start = null;
     if (!down || down.id !== event.pointerId || down.dragged || Math.hypot(event.clientX - down.x, event.clientY - down.y) > clickDragThreshold) return;
     setRayFromEvent(event);
     onSelect(raycaster.intersectObjects(pickable, false)[0]?.object.userData.partId ?? null);
+  });
+  function resetTransformDrag() {
+    // 中断したギズモ操作は開始位置へ戻し、内部の軸・ドラッグ状態も解放する。
+    if (transformControls.dragging) transformControls.reset();
+    renderer.domElement.removeEventListener('pointermove', transformControls._onPointerMove);
+    transformControls.pointerUp({ button: 0 });
+    dragStart = null;
+    controls.enabled = true;
+  }
+  function resetInteractions(event = null) {
+    start = null;
+    paintSampleStart = null;
+    finishResizeDrag(event, false);
+    // ストローク中断までに描いた内容は、通常のpointerupと同様に履歴へ確定する。
+    finishPaintStroke(event, true);
+    resetTransformDrag();
+    controls.enabled = true;
+  }
+  renderer.domElement.addEventListener('pointercancel', resetInteractions);
+  renderer.domElement.addEventListener('lostpointercapture', event => {
+    if (!endingPointerIds.has(event.pointerId) && !cancellingPointerIds.has(event.pointerId)) {
+      // OrbitControlsにもpointercancelを届け、内部のpointer配列とmoveリスナーを解放する。
+      renderer.domElement.dispatchEvent(new PointerEvent('pointercancel', { pointerId: event.pointerId, bubbles: true }));
+    }
+    activePointerIds.delete(event.pointerId);
+  });
+  window.addEventListener('blur', () => {
+    for (const pointerId of [...activePointerIds]) {
+      renderer.domElement.dispatchEvent(new PointerEvent('pointercancel', { pointerId, bubbles: true }));
+    }
+    resetInteractions();
   });
   return {
     rebuild,
