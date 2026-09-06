@@ -21,6 +21,7 @@ html {
 
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
   display: flex;
   flex-direction: column;
@@ -77,14 +78,15 @@ header.app-header .app-tagline {
 main {
   display: grid;
   grid-template-columns: minmax(384px, 1fr) 300px;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
+  overflow: hidden;
 }
 
-.workspace { padding: 20px 22px; min-width: 0; display: flex; flex-direction: column; }
+.workspace { padding: 20px 22px; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .view-heading { display: flex; justify-content: space-between; letter-spacing: .1em; color: #aab7c4; margin-bottom: 12px; font-size: 11px; }
-#viewport { flex: 1; min-height: 320px; background: #080b0e; border: 1px solid #353e48; overflow: auto; display: grid; place-items: center; }
-#canvas-host { min-width: 384px; min-height: 216px; display: flex; align-items: center; justify-content: center; }
+#viewport { position: relative; flex: 1 1 0; min-height: 0; background: #080b0e; border: 1px solid #353e48; overflow: hidden; }
+#canvas-host { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 canvas { display: block; image-rendering: pixelated; touch-action: none; }
 #canvas-host canvas.paint-mode { cursor: crosshair; }
 .view-help { text-align: center; font-size: 11px; color: #8492a0; padding: 13px 0; }
@@ -102,7 +104,7 @@ button:disabled { opacity: .35; cursor: default; }
 .divider { width: 1px; background: #3a444d; margin: 4px; }
 #status { margin: 0; color: #a9b8c5; font-size: 12px; min-height: 20px; }
 #status.error { color: #ff9c91; }
-aside { background: #1d232a; border-left: 1px solid #343b43; padding: 20px 18px; }
+aside { min-height: 0; overflow: auto; background: #1d232a; border-left: 1px solid #343b43; padding: 20px 18px; }
 h2 { font-size: 12px; letter-spacing: .1em; margin: 0 0 14px; display: flex; justify-content: space-between; }
 h2 span { font-size: 11px; color: #8fa0ae; font-weight: 400; }
 #part-list { list-style: none; padding: 0; margin: 0; max-height: 240px; overflow: auto; }
@@ -152,15 +154,14 @@ footer.app-footer {
 footer.app-footer a { color: var(--page-footer-text); }
 [hidden] { display: none !important; }
 
-/* 親の高さを固定し、リサイズ時にキャンバスの旧サイズへ引きずられないようにする。 */
 @media (min-width: 851px) {
-  main { min-height: 560px; }
-  aside { overflow: auto; }
+  body { min-height: 620px; }
 }
 
 @media (max-width: 850px) {
-  main { grid-template-columns: minmax(384px, 1fr); }
-  aside { border-left: 0; border-top: 1px solid #343b43; }
+  body { height: auto; }
+  main { flex: none; grid-template-columns: minmax(384px, 1fr); overflow: visible; }
+  aside { overflow: visible; border-left: 0; border-top: 1px solid #343b43; }
   .workspace { padding: 16px; height: 560px; min-height: 0; }
   #viewport { min-height: 250px; }
   .app-badge { display: none; }

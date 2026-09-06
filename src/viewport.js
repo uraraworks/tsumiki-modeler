@@ -6,6 +6,7 @@ import { createBlankTexture, textureLayout } from './model.js';
 import { applyAtlasUV, createPartCanvasTexture, textureSignature, updatePartCanvasTexturePixel } from './texture.js';
 export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview, paintHandlers = {}) {
   const { onCommitPaint = () => {}, onHoverPaint = () => {}, onSamplePaint = () => {}, onPreviewPaint = () => {} } = paintHandlers;
+  const clickDragThreshold = 4;
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
   renderer.setSize(384, 216, false);
@@ -21,7 +22,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   controls.update();
   const defaultMouseButtons = { ...controls.mouseButtons };
   let scene, pickable = [], mode = 'translate', selectedMesh = null, selectedPart = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
-  let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null;
+  let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null, paintSampleStart = null;
   const textureCache = new Map();
   const handleWorldPosition = new THREE.Vector3();
   const render = () => {
@@ -99,6 +100,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
   function rebuild(doc, selectedId) {
     finishPaintStroke(null, false);
+    paintSampleStart = null;
     if (resizeDrag) finishResizeDrag(null, false);
     controls.enabled = true;
     if (scene) {
@@ -147,12 +149,16 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     if (selectedMesh && mode === 'resize') createResizeHandles(selectedPart, selectedMesh);
     render();
   }
+  let displayScale = 0;
   const resize = () => {
     const scale = Math.max(1, Math.floor(Math.min(container.clientWidth / 384, container.clientHeight / 216)));
-    renderer.domElement.style.width = `${384 * scale}px`;
-    renderer.domElement.style.height = `${216 * scale}px`;
     document.querySelector('#resolution').textContent = `384 × 216 · ${scale}倍`;
-    render();
+    if (scale !== displayScale) {
+      displayScale = scale;
+      renderer.domElement.style.width = `${384 * displayScale}px`;
+      renderer.domElement.style.height = `${216 * displayScale}px`;
+      render();
+    }
   };
   new ResizeObserver(resize).observe(container);
   resize();
@@ -396,16 +402,39 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     if (paintStroke?.pointerId === event.pointerId) finishPaintStroke(null, true);
   });
   renderer.domElement.addEventListener('pointerleave', () => { if (mode === 'paint' && !paintStroke) onHoverPaint(null); });
+  renderer.domElement.addEventListener('pointerdown', event => {
+    if (mode !== 'paint' || event.button !== 2) return;
+    paintSampleStart = { x: event.clientX, y: event.clientY, id: event.pointerId, dragged: false };
+  });
+  renderer.domElement.addEventListener('pointermove', event => {
+    if (paintSampleStart && Math.hypot(event.clientX - paintSampleStart.x, event.clientY - paintSampleStart.y) > clickDragThreshold) paintSampleStart.dragged = true;
+  });
+  renderer.domElement.addEventListener('pointercancel', event => {
+    if (paintSampleStart?.id === event.pointerId) paintSampleStart = null;
+  });
+  renderer.domElement.addEventListener('pointerup', event => {
+    const down = paintSampleStart;
+    if (!down || down.id !== event.pointerId) return;
+    paintSampleStart = null;
+    if (mode !== 'paint' || down.dragged || Math.hypot(event.clientX - down.x, event.clientY - down.y) > clickDragThreshold) return;
+    const hit = paintHit(event);
+    if (hit) onSamplePaint(hit.part.id, hit.part.texture?.rows[hit.y][hit.x] ?? '.');
+  });
+  // OrbitControls 自身の抑止は非ペイント時だけ遮り、通常のコンテキストメニューを残す。
+  renderer.domElement.addEventListener('contextmenu', event => {
+    if (mode === 'paint') event.preventDefault();
+    else event.stopImmediatePropagation();
+  }, true);
   let start = null;
   renderer.domElement.addEventListener('pointerdown', event => {
     // TransformControls のリスナーが先に動くため、ギズモを掴んだクリックは選択判定に回さない。
     start = event.button === 0 && !transformControls.dragging ? { x: event.clientX, y: event.clientY, id: event.pointerId, dragged: false } : null;
   });
-  renderer.domElement.addEventListener('pointermove', event => { if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) start.dragged = true; });
+  renderer.domElement.addEventListener('pointermove', event => { if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > clickDragThreshold) start.dragged = true; });
   renderer.domElement.addEventListener('pointercancel', () => { start = null; });
   renderer.domElement.addEventListener('pointerup', event => {
     const down = start; start = null;
-    if (!down || down.id !== event.pointerId || down.dragged || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 4) return;
+    if (!down || down.id !== event.pointerId || down.dragged || Math.hypot(event.clientX - down.x, event.clientY - down.y) > clickDragThreshold) return;
     setRayFromEvent(event);
     onSelect(raycaster.intersectObjects(pickable, false)[0]?.object.userData.partId ?? null);
   });
@@ -415,6 +444,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       if (!['translate', 'rotate', 'resize', 'paint'].includes(nextMode)) return;
       finishResizeDrag(null, false);
       finishPaintStroke(null, false);
+      paintSampleStart = null;
       mode = nextMode;
       controls.mouseButtons = nextMode === 'paint'
         ? { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }

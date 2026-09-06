@@ -160,7 +160,7 @@ function setTransformMode(mode) {
   $('#mode-resize').setAttribute('aria-pressed', String(mode === 'resize'));
   $('#mode-paint').setAttribute('aria-pressed', String(mode === 'paint'));
   $('#view-help').textContent = mode === 'paint'
-    ? '左ドラッグ：描く　／　右ドラッグ：回転　／　中ドラッグ：移動　／　ホイール：ズーム　／　Alt＋クリック：スポイト'
+    ? '左ドラッグ：描く　／　右クリック：スポイト　／　右ドラッグ：回転　／　中ドラッグ：移動　／　ホイール：ズーム　／　Alt＋クリック：スポイト'
     : '左ドラッグ：回転　／　右ドラッグ：移動　／　ホイール：ズーム　／　W：移動　／　E：回転　／　R：リサイズ　／　P：ペイント';
   if (mode === 'resize') status('面をドラッグしてサイズを変えます。');
   else if (mode === 'paint') status('モデルを左ドラッグして1ドットずつ描きます。');
@@ -191,15 +191,8 @@ for (const tool of ['pen', 'eraser', 'eyedropper']) $(`#paint-${tool}`).addEvent
 function samplePaintColor(partId, character) {
   const part = doc.parts.find(candidate => candidate.id === partId);
   if (!part) return;
-  if (character !== '.') paintColorIndex = PALETTE_CHARS.indexOf(character);
-  else {
-    const rgb = hex => [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
-    const source = rgb(part.color);
-    paintColorIndex = doc.palette.reduce((best, color, index) => {
-      const candidate = rgb(color), distance = candidate.reduce((sum, value, channel) => sum + (value - source[channel]) ** 2, 0);
-      return distance < best.distance ? { index, distance } : best;
-    }, { index: 0, distance: Infinity }).index;
-  }
+  if (character === '.') { status('未指定色（パーツ色）のため、現在色は変更しませんでした。'); return; }
+  paintColorIndex = PALETTE_CHARS.indexOf(character);
   updatePaintUi(); status(`スポイトで ${doc.palette[paintColorIndex]} を取得しました。`);
 }
 function showPaintHover(hit) {
