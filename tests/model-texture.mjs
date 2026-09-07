@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { applyAnimationFrame, calculateBoneWorldTransforms, createBlankTexture, createBone, createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, interpolateRotation, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { applyAnimationFrame, calculateBoneWorldTransforms, createBlankTexture, createBone, createChestSampleDoc, createNewDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, interpolateRotation, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
 import { validateModelReport } from '../src/model-validation.js';
 
@@ -19,6 +19,11 @@ assert.doesNotThrow(() => validateDoc(doc), '人型の歩行アニメーショ�
 for (const part of doc.parts) assert.doesNotThrow(() => createPartTexturePixels(part, doc.palette));
 assert.equal(doc.texelsPerUnit, 4);
 assert.deepEqual(textureLayout(doc.parts[0], 4).size, [64, 32]);
+
+const newDoc = createNewDoc();
+assert.doesNotThrow(() => validateDoc(newDoc), '新規モデルがModelDocとして有効');
+assert.equal(newDoc.name, 'untitled');
+assert.deepEqual(newDoc.parts.map(part => [part.name, part.type, part.position]), [['箱 1', 'box', [0, 2, 0]]]);
 
 const chest = createChestSampleDoc();
 assert.doesNotThrow(() => validateDoc(chest));

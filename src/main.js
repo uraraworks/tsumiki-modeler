@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
+import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createNewDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 import { connectMcpBridge } from './bridge.js';
@@ -57,6 +57,7 @@ function refresh() {
   $('#delete').disabled = !part;
   $('#duplicate').disabled = !part; $('#mirror').disabled = !part;
   $('#undo').disabled = !history.past.length; $('#redo').disabled = !history.future.length;
+  $('#sample-new').setAttribute('aria-pressed', String(activeSample === 'new'));
   $('#sample-human').setAttribute('aria-pressed', String(activeSample === 'human'));
   $('#sample-chest').setAttribute('aria-pressed', String(activeSample === 'chest'));
   $('#sample-teapot').setAttribute('aria-pressed', String(activeSample === 'teapot'));
@@ -452,6 +453,7 @@ $('#redo').addEventListener('click', () => { stopPlayback(); doc = history.redo(
 function switchSample(sample) {
   if (!confirm('編集中の内容は失われます。よろしいですか？')) return;
   const samples = {
+    new: [createNewDoc, '新規'],
     human: [createSampleDoc, '人型'],
     chest: [createChestSampleDoc, '宝箱'],
     teapot: [createTeapotSampleDoc, 'ティーポット'],
@@ -463,8 +465,9 @@ function switchSample(sample) {
   selectedId = doc.parts[0]?.id ?? null;
   selectedBoneId = null;
   refresh();
-  status(`${label}サンプルに切り替えました。`);
+  status(sample === 'new' ? '新規モデルを作成しました。' : `${label}サンプルに切り替えました。`);
 }
+$('#sample-new').addEventListener('click', () => switchSample('new'));
 $('#sample-human').addEventListener('click', () => switchSample('human'));
 $('#sample-chest').addEventListener('click', () => switchSample('chest'));
 $('#sample-teapot').addEventListener('click', () => switchSample('teapot'));

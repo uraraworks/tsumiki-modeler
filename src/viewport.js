@@ -36,7 +36,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   controls.maxDistance = 50000;
   controls.update();
   const defaultMouseButtons = { ...controls.mouseButtons };
-  let scene, pickable = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate';
+  let scene, gridHelper, pickable = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate';
   let selectedMesh = null, selectedPart = null, selectedBoneObject = null, partTransformProxy = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
   let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null, paintSampleStart = null;
   const textureCache = new Map();
@@ -158,7 +158,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     light.position.set(-3, 8, 5);
     const ambient = new THREE.AmbientLight('#ffffff', 0.18);
     scene.add(light, ambient);
-    scene.add(new THREE.GridHelper(40 * doc.grid, 40, '#687988', '#3b4a57'));
+    gridHelper = new THREE.GridHelper(40 * doc.grid, 40, '#687988', '#3b4a57');
+    scene.add(gridHelper);
     const bindPositions = new Map();
     const bindPositionFor = bone => {
       if (bindPositions.has(bone.id)) return bindPositions.get(bone.id);
@@ -589,9 +590,10 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     },
     renderPreview(cameraOptions = {}, previewDoc = null) {
       if (!scene) throw new Error('3D表示が初期化されていません。');
-      const oldPosition = camera.position.clone(), oldQuaternion = camera.quaternion.clone(), oldTarget = controls.target.clone();
       const oldRotations = new Map([...boneObjects].map(([id, object]) => [id, object.rotation.clone()]));
       const helperVisible = transformHelper.visible;
+      const gridVisible = gridHelper.visible;
+      const handlesVisible = handleGroup?.visible;
       const boneVisibility = boneVisuals.map(object => object.visible);
       try {
         if (previewDoc) for (const bone of previewDoc.bones) {
@@ -602,30 +604,52 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         const bounds = new THREE.Box3();
         for (const object of pickable) bounds.expandByObject(object);
         const target = bounds.isEmpty() ? new THREE.Vector3() : bounds.getCenter(new THREE.Vector3());
-        const sphere = bounds.isEmpty() ? { radius: 10 } : bounds.getBoundingSphere(new THREE.Sphere());
         const presets = {
-          front: [0, 0], side: [90, 0], top: [0, 89], iso: [38, 28],
+          front: [0, 0], side: [90, 0], back: [180, 0], top: [0, 90], iso: [38, 28],
         };
-        const preset = presets[cameraOptions.preset ?? 'iso'] ?? presets.iso;
+        const preset = presets[cameraOptions.camera ?? cameraOptions.preset ?? 'iso'] ?? presets.iso;
         const azimuth = THREE.MathUtils.degToRad(cameraOptions.azimuth ?? preset[0]);
         const elevation = THREE.MathUtils.degToRad(cameraOptions.elevation ?? preset[1]);
-        const distance = cameraOptions.distance ?? Math.max(2, sphere.radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.15);
-        if (![azimuth, elevation, distance].every(Number.isFinite) || distance <= 0) throw new Error('カメラの方位角・仰角・距離を確認してください。距離は正数です。');
-        camera.position.copy(target).add(new THREE.Vector3(
+        if (![azimuth, elevation].every(Number.isFinite)) throw new Error('カメラの方位角・仰角を確認してください。');
+        const direction = new THREE.Vector3(
           Math.sin(azimuth) * Math.cos(elevation),
           Math.sin(elevation),
           Math.cos(azimuth) * Math.cos(elevation),
-        ).multiplyScalar(distance));
-        camera.lookAt(target);
-        controls.target.copy(target);
+        );
+        const previewCamera = new THREE.PerspectiveCamera(camera.fov, 384 / 216, camera.near, camera.far);
+        if (Math.abs(direction.y) > .9999) previewCamera.up.set(0, 0, direction.y > 0 ? -1 : 1);
+        previewCamera.position.copy(target).add(direction);
+        previewCamera.lookAt(target);
+        previewCamera.updateMatrixWorld(true);
+        let distance = cameraOptions.distance;
+        if (distance === undefined) {
+          if (cameraOptions.fit === false || bounds.isEmpty()) distance = 30;
+          else {
+            const inverseRotation = previewCamera.quaternion.clone().invert();
+            const tanY = Math.tan(THREE.MathUtils.degToRad(previewCamera.fov / 2)) / 1.1;
+            const tanX = tanY * previewCamera.aspect;
+            distance = 2;
+            for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) {
+              const point = new THREE.Vector3(x, y, z).sub(target).applyQuaternion(inverseRotation);
+              distance = Math.max(distance, point.z + Math.abs(point.x) / tanX, point.z + Math.abs(point.y) / tanY);
+            }
+          }
+        }
+        if (!Number.isFinite(distance) || distance <= 0) throw new Error('カメラ距離は正数で指定してください。');
+        previewCamera.position.copy(target).addScaledVector(direction, distance);
+        previewCamera.lookAt(target);
+        previewCamera.updateMatrixWorld(true);
         transformHelper.visible = false;
+        gridHelper.visible = false;
+        if (handleGroup) handleGroup.visible = false;
         boneVisuals.forEach(object => { object.visible = false; });
-        renderer.render(scene, camera);
+        renderer.render(scene, previewCamera);
         return renderer.domElement.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
       } finally {
-        camera.position.copy(oldPosition); camera.quaternion.copy(oldQuaternion); controls.target.copy(oldTarget);
         for (const [id, rotation] of oldRotations) boneObjects.get(id)?.rotation.copy(rotation);
         transformHelper.visible = helperVisible;
+        gridHelper.visible = gridVisible;
+        if (handleGroup) handleGroup.visible = handlesVisible;
         boneVisuals.forEach((object, index) => { object.visible = boneVisibility[index]; });
         render();
       }

@@ -99,15 +99,17 @@ server.tool('create_from_spec', '完全なModelDocで現在モデルを丸ごと
 server.tool('validate_model', '現在のModelDocをvalidateDocで検査します。エラーとは別に、未割当パーツ、未使用パレット色、名前重複、左右名（左/右・_l/_r）の不揃いを警告として返します。', {}, async () =>
   withBridge(async () => jsonText(await sendCommand('validate_model'))));
 
-server.tool('render_preview', '現在モデルの実描画を384x216 PNGで取得します。front/side/top/isoプリセット、または方位角・仰角（度）・距離を指定できます。frame指定時はアニメーション姿勢を描画します。', {
-  preset: z.enum(['front', 'side', 'top', 'iso']).optional().describe('カメラプリセット。既定はiso。数値指定は同じ軸だけ上書きします。'),
+server.tool('render_preview', '現在モデルだけを384x216 PNGで描画します。cameraでfront（+Z）/side（+X）/back（-Z）/top（+Y）/isoを指定でき、省略時はisoで全パーツが約10%の余白付きで収まる距離へ自動調整します。方位角・仰角（度）・距離も指定でき、frame指定時はアニメーション姿勢を描画します。ボーン、ギズモ、グリッドは描画せず、編集中のカメラも変更しません。', {
+  camera: z.enum(['front', 'side', 'back', 'top', 'iso']).optional().describe('カメラプリセット。既定はiso。数値指定は同じ軸だけ上書きします。'),
+  preset: z.enum(['front', 'side', 'back', 'top', 'iso']).optional().describe('後方互換用のcamera別名。cameraが優先されます。'),
   azimuth: z.number().optional().describe('モデル中心から見た方位角（度）。0は正面（+Z）、90は側面（+X）。'),
-  elevation: z.number().min(-89).max(89).optional().describe('モデル中心から見た仰角（度）。'),
+  elevation: z.number().min(-90).max(90).optional().describe('モデル中心から見た仰角（度）。'),
   distance: z.number().positive().optional().describe('モデル中心からカメラまでの距離。省略時はモデル全体が収まるよう自動調整。'),
+  fit: z.boolean().optional().describe('省略した距離の自動調整。既定はtrue。false時の既定距離は30。'),
   animation_id: z.string().optional().describe('frameを描画するアニメーションID。省略時は先頭のアニメーション。'),
   frame: z.number().int().optional().describe('描画するアニメーションのフレーム番号。'),
-}, async ({ preset, azimuth, elevation, distance, animation_id, frame }) => withBridge(async () => {
-  const result = await sendCommand('render_preview', { preset, azimuth, elevation, distance, animationId: animation_id, frame });
+}, async ({ camera, preset, azimuth, elevation, distance, fit, animation_id, frame }) => withBridge(async () => {
+  const result = await sendCommand('render_preview', { camera, preset, azimuth, elevation, distance, fit, animationId: animation_id, frame });
   if (typeof result?.base64 !== 'string') throw new Error('ブラウザからPNGデータが返されませんでした。');
   return { content: [
     { type: 'text', text: '384x216 PNG preview' },

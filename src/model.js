@@ -152,6 +152,15 @@ export function createBone(doc, parent = null) {
   return { id: `b${number}`, name: `ボーン ${number}`, parent, position: [0, parent ? 2 : 0, 0], rotation: [0, 0, 0] };
 }
 
+export function createNewDoc() {
+  const doc = {
+    version: 1, name: 'untitled', grid: 1, texelsPerUnit: DEFAULT_TEXELS_PER_UNIT,
+    palette: [...DEFAULT_PALETTE], parts: [], bones: [], animations: [],
+  };
+  doc.parts.push(createPart(doc, 'box'));
+  return validateDoc(doc);
+}
+
 // Three.jsに依存しないFK計算。行列は列優先で、T * Rz * Ry * Rx の順に合成する。
 const multiplyMatrix4 = (a, b) => {
   const result = Array(16).fill(0);
