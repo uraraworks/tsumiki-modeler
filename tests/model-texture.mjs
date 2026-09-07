@@ -138,6 +138,38 @@ assert.ok(distance3(rotatedNearestPoint, neckPivot) <= neckSpherePart.radius + 1
   '頭をX軸45度・Z軸45度回転させても頭の最近接点が首の球の半径内にとどまる（隙間ができない）');
 // --------------------------------------------------------------------------------
 
+// --- 差し込み量（食い込み）の検算 ---------------------------------------------------
+// 「胴に食い込む量」は、腕・脚と胴のバウンディングボックスが3軸それぞれで重なる長さのうち
+// 最小のもの（＝分離軸定理でいう貫通深度）で測る。腕は胴の側面へX方向にだけ差し込んであり、
+// 脚は胴の下端へY方向にだけ差し込んであるため、他の軸の重なりが大きくても
+// （腕が胴の高さ方向に並走する、脚が胴の奥行きに収まる等）実際の差し込み量ではない。
+const penetrationDepth = (a, b) => {
+  const overlaps = [0, 1, 2].map(axis => Math.min(a.max[axis], b.max[axis]) - Math.max(a.min[axis], b.min[axis]));
+  return overlaps.every(value => value > 0) ? Math.min(...overlaps) : 0;
+};
+for (const limbName of ['左腕', '右腕', '左脚', '右脚']) {
+  const depth = penetrationDepth(torsoBounds, boxBounds(partByName(limbName)));
+  assert.ok(depth > 0, `${limbName}は胴と接触（食い込み）している`);
+  assert.ok(depth <= 2, `${limbName}が胴に食い込む量(${depth})は2グリッド以下＝過剰な貫通がない`);
+}
+// 腕は肩ボーンより上に出ない（肩から下にだけ伸びる）。
+for (const [armName, boneId] of [['左腕', 'b4'], ['右腕', 'b5']]) {
+  const shoulderY = calculateBoneWorldTransforms(doc).get(boneId).position[1];
+  const armTop = boxBounds(partByName(armName)).max[1];
+  assert.ok(armTop <= shoulderY, `${armName}の上端(${armTop})が肩ボーンの高さ(${shoulderY})以下＝肩より上に出ない`);
+}
+// --------------------------------------------------------------------------------
+
+// --- プロポーション（頭身）の検算 ---------------------------------------------------
+// 頭身＝全高（脚の下端＝地面から頭の上端まで）÷頭の高さ。4〜5頭身を目安にする。
+const totalHeight = headBounds.max[1] - boxBounds(partByName('左脚')).min[1];
+const headHeight = headBounds.max[1] - headBounds.min[1];
+assert.equal(boxBounds(partByName('左脚')).min[1], 0, '脚の下端が地面(y=0)に接地している');
+const headToBodyRatio = totalHeight / headHeight;
+assert.ok(headToBodyRatio >= 4 && headToBodyRatio <= 5,
+  `頭身(${headToBodyRatio})は4〜5頭身の範囲内`);
+// --------------------------------------------------------------------------------
+
 const newDoc = createNewDoc();
 assert.doesNotThrow(() => validateDoc(newDoc), '新規モデルがModelDocとして有効');
 assert.equal(newDoc.name, 'untitled');

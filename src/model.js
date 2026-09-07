@@ -802,31 +802,42 @@ export function mirrorPart(doc, source) {
   }
   return copy;
 }
-// 人型サンプル。ボーンで大きく曲げても接合部が割れないよう、以下の2点を意識している。
-// 1. パーツ同士を隙間なく重ねる（腕・脚の付け根は胴の側面まで、胴の下端は股関節の位置まで差し込む）。
-// 2. 肩・股関節には、そのボーン自身の位置を中心にした球を置く。球は自分自身の回転中心を中心に
-//    置かれているため、そのボーンがどれだけ回転しても見た目（球の位置・形）が変わらず、
-//    回転で開く隙間を埋め続けられる（ローポリのゲームキャラでよく使われる手法）。
+// 人型サンプル。以前は「回転しても関節が抜けない」ことを、腕・脚を胴へ深く差し込むこと
+// （胴を縦貫通するほど）だけで担保していたため、静止姿勢のプロポーションが破綻していた
+// （腕が胴を縦に貫通し肩より上（首の高さ）まで飛び出す、脚が胴に3グリッドも食い込む等）。
+// その後、関節に球（スフィア）を追加したが、深い差し込みをやめずに球だけ足したため、
+// 差し込みと球が二重に効いて過剰な貫通になっていた。
+// 今回、方針を「差し込みは1グリッド程度の浅いものにとどめ、隙間を埋める役目は関節の球に
+// 一本化する」よう整理した。具体的には：
+// 1. 腕は肩ボーンの位置より上に出ない（肩から下にだけ伸びる）。胴側面への差し込みはX方向に
+//    1グリッドだけ（腕の中心Xを肩ボーン＝胴側面と同じXに置くことで自動的に1グリッドだけ重なる）。
+// 2. 脚は股関節ボーンの位置からY方向に1グリッドだけ胴へ食い込ませる（それ以上は入れない）。
+// 3. 肩・股関節・首の3関節には、そのボーン自身の位置を中心にした球を置く。球は自分自身の
+//    回転中心を中心に置かれているため、そのボーンがどれだけ回転しても見た目（球の位置・形）が
+//    変わらず、回転で開く隙間を埋め続けられる（ローポリのゲームキャラでよく使われる手法）。
+//    半径は「回転後もパーツ側の最近接点が球の中心から半径以内にとどまる」よう数値計算で決めてある。
+// 4. 頭身は4.5（全高18÷頭の高さ4）。頭と胴はY範囲を重ねず、隙間は首の球で埋める。
 // 検算はdocs/開発ログ.mdとtests/model-texture.mjsを参照。
 export function createSampleDoc() {
   const doc = {
     version: 1, name: 'untitled', grid: 1, texelsPerUnit: DEFAULT_TEXELS_PER_UNIT, palette: [...DEFAULT_PALETTE], parts: [],
     bones: [
-      { id: 'b1', name: '腰', parent: null, position: [0, 4, 0], rotation: [0, 0, 0] },
-      // 胴は腰と同じワールド位置を回転中心にする（胴の下端を股関節の位置まで深く差し込んであるため、
-      // 胴が前傾しても回転中心付近は常に胴の内部に留まり、脚の付け根との接続が切れない）。
+      // 腰＝胴の回転中心。胴の内部（下端寄り）に置くことで、胴が前傾しても回転中心が
+      // 常に胴の内部にとどまり、股関節・脚との接続が切れない（内接半径2グリッドの余裕）。
+      { id: 'b1', name: '腰', parent: null, position: [0, 9, 0], rotation: [0, 0, 0] },
       { id: 'b2', name: '胴', parent: 'b1', position: [0, 0, 0], rotation: [0, 0, 0] },
       // 頭ボーンの回転中心は「頭自身の中心」ではなく「首の付け根（胴の上端）」に置く。
       // これにより頭がどんな角度に回転しても、この回転中心に置いた首の球（後述）が
       // 見た目を変えずに首の隙間を埋め続けられる。
       { id: 'b3', name: '頭', parent: 'b2', position: [0, 4, 0], rotation: [0, 0, 0] },
-      // 肩・股関節のボーン位置は、胴の側面（x=±2）にちょうど接する位置に置く。
-      // 腕・脚パーツの中心もこの位置に一致させてあるため、どれだけ回転しても
-      // パーツは常にこの位置を包み込み続け、胴の側面との接触が失われない。
+      // 肩ボーンは胴の側面（x=±2）かつ胴の上端寄りに置く。腕パーツの中心Xをこれと揃える
+      // ことで、腕は自動的にX方向へ1グリッドだけ胴へ重なり、それ以上は重ならない。
       { id: 'b4', name: '左腕', parent: 'b2', position: [-2, 3, 0], rotation: [0, 0, 0] },
       { id: 'b5', name: '右腕', parent: 'b2', position: [2, 3, 0], rotation: [0, 0, 0] },
-      { id: 'b6', name: '左脚', parent: 'b1', position: [-2, -1, 0], rotation: [0, 0, 0] },
-      { id: 'b7', name: '右脚', parent: 'b1', position: [2, -1, 0], rotation: [0, 0, 0] },
+      // 股関節ボーンは胴の側面（x=±2）かつ胴の下端に置く。脚はここからY方向に1グリッドだけ
+      // 胴へ食い込ませ、それ以上は食い込ませない。
+      { id: 'b6', name: '左脚', parent: 'b1', position: [-2, -2, 0], rotation: [0, 0, 0] },
+      { id: 'b7', name: '右脚', parent: 'b1', position: [2, -2, 0], rotation: [0, 0, 0] },
     ],
     animations: [{
       id: 'a1', name: 'walk', fps: 12, length: 12,
@@ -839,24 +850,30 @@ export function createSampleDoc() {
     }],
   };
   const samples = [
-    { name: '頭', type: 'box', position: [0, 11, 0], size: [4, 4, 4], color: '#e0a070', bone: 'b3' },
+    // 頭：胴の上端(y=13)より2上に隙間(1グリッド)を空けて置く。隙間は首の球で埋める。
+    { name: '頭', type: 'box', position: [0, 16, 0], size: [4, 4, 4], color: '#e0a070', bone: 'b3' },
     // 首：頭ボーンの回転中心（胴の上端、首の付け根）にちょうど置いた半径1の球。
     // 頭がどんな角度に回転しても回転中心の位置・形は変わらないため、胴の上端と頭の下端の
     // 間にできる隙間を角度によらず埋め続けられる（肩・股関節と同じ考え方）。
-    { name: '首', type: 'sphere', position: [0, 8, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b3' },
-    // 胴は幅4×奥行4×高さ6。下端(y=2)は股関節ボーン(y=4)より2下まで潜り込み、
-    // 側面(x=±2, z=±2)は肩・股関節ボーンにちょうど接する太さにしてある。上端(y=8)は
-    // 頭の下端(y=9)より下にしてあり、頭と胴のY範囲が重ならない
-    // （胴が頭に突き抜けて顔が隠れる不具合の修正）。
-    { name: '胴', type: 'box', position: [0, 5, 0], size: [4, 6, 4], color: '#689caa', bone: 'b2' },
-    { name: '左肩', type: 'sphere', position: [-2, 7, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b4' },
-    { name: '左腕', type: 'box', position: [-2, 7, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b4' },
-    { name: '右肩', type: 'sphere', position: [2, 7, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b5' },
-    { name: '右腕', type: 'box', position: [2, 7, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b5' },
-    { name: '左股関節', type: 'sphere', position: [-2, 3, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b6' },
-    { name: '左脚', type: 'box', position: [-2, 3, 0], size: [2, 4, 2], color: '#646f8c', bone: 'b6' },
-    { name: '右股関節', type: 'sphere', position: [2, 3, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b7' },
-    { name: '右脚', type: 'box', position: [2, 3, 0], size: [2, 4, 2], color: '#646f8c', bone: 'b7' },
+    { name: '首', type: 'sphere', position: [0, 13, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b3' },
+    // 胴は幅4×奥行4×高さ6（y=7..13）。頭とはY範囲が重ならず、腕・脚の食い込みは
+    // それぞれ1グリッドにとどめてある（詳細は各パーツのコメントを参照）。
+    { name: '胴', type: 'box', position: [0, 10, 0], size: [4, 6, 4], color: '#689caa', bone: 'b2' },
+    // 肩の球：肩ボーン（胴の側面・上端寄り）にちょうど置く。
+    { name: '左肩', type: 'sphere', position: [-2, 12, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b4' },
+    // 腕：上端(y=11)は肩ボーン(y=12)より1下＝肩より上に出ない。肩ボーンとのY方向の隙間
+    // （1グリッド）は肩の球が埋める。中心Xを肩ボーンと同じ±2に揃えてあるので、胴側面へは
+    // X方向に半径1（腕の太さの半分）＝1グリッドだけ自動的に重なる。
+    { name: '左腕', type: 'box', position: [-2, 8, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b4' },
+    { name: '右肩', type: 'sphere', position: [2, 12, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b5' },
+    { name: '右腕', type: 'box', position: [2, 8, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b5' },
+    // 股関節の球：股関節ボーン（胴の側面・下端）にちょうど置く。
+    { name: '左股関節', type: 'sphere', position: [-2, 7, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b6' },
+    // 脚：上端(y=8)は股関節ボーン(y=7)より1上＝胴へのY方向の食い込みは1グリッドのみ。
+    // 下端(y=0)を地面に接地させ、長さは腕よりも長くしてある。
+    { name: '左脚', type: 'box', position: [-2, 4, 0], size: [2, 8, 2], color: '#646f8c', bone: 'b6' },
+    { name: '右股関節', type: 'sphere', position: [2, 7, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b7' },
+    { name: '右脚', type: 'box', position: [2, 4, 0], size: [2, 8, 2], color: '#646f8c', bone: 'b7' },
   ];
   for (const sample of samples) {
     const { name, type, ...properties } = sample;
