@@ -1,0 +1,21 @@
+{
+  "name": "tsumiki-modeler-mcp",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "MCP server that operates Tsumiki Modeler in a browser via a WebSocket bridge",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "bundle": "esbuild server.mjs --bundle --platform=node --format=esm --target=node18 --external:bufferutil --external:utf-8-validate --banner:js=\"import{createRequire as __tsumikiCreateRequire}from'node:module';const require=__tsumikiCreateRequire(import.meta.url);\" --outfile=dist/tsumiki-modeler-mcp.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "ws": "latest"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

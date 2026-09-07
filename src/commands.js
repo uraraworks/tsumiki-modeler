@@ -1,6 +1,33 @@
-import { PALETTE_CHARS, cloneDoc, createBlankTexture, resizePartTexture, validateDoc } from './model.js';
+import { PALETTE_CHARS, cloneDoc, createBlankTexture, createBone, createPart, resizePartTexture, validateDoc } from './model.js';
+
+function withCommandDefaults(doc, cmd) {
+  if (!cmd || typeof cmd !== 'object' || Array.isArray(cmd)) return cmd;
+  if (cmd.type === 'addPart') {
+    const supplied = cmd.part;
+    if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) return cmd;
+    const part = { ...createPart(doc, supplied.type), ...cloneDoc(supplied) };
+    if (supplied.color === undefined) part.color = doc.palette[0];
+    if (supplied.texture === undefined) {
+      delete part.texture;
+      const textureDimensionsAreValid = part.type === 'box'
+        ? Array.isArray(part.size) && part.size.length === 3 && part.size.every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000)
+        : part.type === 'cylinder' && [part.radius, part.height].every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000);
+      // 不正な寸法はテクスチャ生成で先に失敗させず、validateDocの具体的な検証理由へ回す。
+      if (textureDimensionsAreValid) part.texture = createBlankTexture(part, doc.texelsPerUnit);
+    }
+    return { ...cmd, part };
+  }
+  if (cmd.type === 'addBone') {
+    const supplied = cmd.bone;
+    if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) return cmd;
+    return { ...cmd, bone: { ...createBone(doc, supplied.parent ?? null), ...cloneDoc(supplied) } };
+  }
+  return cmd;
+}
+
 // 入力を変更せず、新しい検証済みドキュメントを返す。
 export function applyCommand(doc, cmd) {
+  cmd = withCommandDefaults(doc, cmd);
   const next = cloneDoc(doc);
   if (cmd.type === 'addPart') next.parts.push(cloneDoc(cmd.part));
   else if (cmd.type === 'addBone') next.bones.push(cloneDoc(cmd.bone));
@@ -103,12 +130,25 @@ export function applyCommand(doc, cmd) {
 }
 export class CommandHistory {
   constructor() { this.past = []; this.future = []; }
-  execute(doc, cmd) {
-    const next = applyCommand(doc, cmd);
+  commit(doc, next, command) {
     if (JSON.stringify(next) === JSON.stringify(doc)) return doc;
-    this.past.push({ command: structuredClone(cmd), before: cloneDoc(doc), after: cloneDoc(next) });
+    this.past.push({ command: structuredClone(command), before: cloneDoc(doc), after: cloneDoc(next) });
     this.future = [];
     return next;
+  }
+  execute(doc, cmd) {
+    const next = applyCommand(doc, cmd);
+    return this.commit(doc, next, cmd);
+  }
+  executeBatch(doc, commands) {
+    if (!Array.isArray(commands) || !commands.length) throw new Error('commandsには1件以上のコマンドを指定してください。');
+    let next = doc;
+    for (const command of commands) next = applyCommand(next, command);
+    return this.commit(doc, next, { type: 'batch', commands });
+  }
+  replace(doc, next) {
+    const validated = validateDoc(cloneDoc(next));
+    return this.commit(doc, validated, { type: 'replaceDoc' });
   }
   undo(doc) {
     const entry = this.past.pop();

@@ -587,5 +587,48 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       transformControls.enabled = enabled;
       render();
     },
+    renderPreview(cameraOptions = {}, previewDoc = null) {
+      if (!scene) throw new Error('3D表示が初期化されていません。');
+      const oldPosition = camera.position.clone(), oldQuaternion = camera.quaternion.clone(), oldTarget = controls.target.clone();
+      const oldRotations = new Map([...boneObjects].map(([id, object]) => [id, object.rotation.clone()]));
+      const helperVisible = transformHelper.visible;
+      const boneVisibility = boneVisuals.map(object => object.visible);
+      try {
+        if (previewDoc) for (const bone of previewDoc.bones) {
+          const object = boneObjects.get(bone.id);
+          if (object) object.rotation.set(...bone.rotation.map(THREE.MathUtils.degToRad));
+        }
+        scene.updateMatrixWorld(true);
+        const bounds = new THREE.Box3();
+        for (const object of pickable) bounds.expandByObject(object);
+        const target = bounds.isEmpty() ? new THREE.Vector3() : bounds.getCenter(new THREE.Vector3());
+        const sphere = bounds.isEmpty() ? { radius: 10 } : bounds.getBoundingSphere(new THREE.Sphere());
+        const presets = {
+          front: [0, 0], side: [90, 0], top: [0, 89], iso: [38, 28],
+        };
+        const preset = presets[cameraOptions.preset ?? 'iso'] ?? presets.iso;
+        const azimuth = THREE.MathUtils.degToRad(cameraOptions.azimuth ?? preset[0]);
+        const elevation = THREE.MathUtils.degToRad(cameraOptions.elevation ?? preset[1]);
+        const distance = cameraOptions.distance ?? Math.max(2, sphere.radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.15);
+        if (![azimuth, elevation, distance].every(Number.isFinite) || distance <= 0) throw new Error('カメラの方位角・仰角・距離を確認してください。距離は正数です。');
+        camera.position.copy(target).add(new THREE.Vector3(
+          Math.sin(azimuth) * Math.cos(elevation),
+          Math.sin(elevation),
+          Math.cos(azimuth) * Math.cos(elevation),
+        ).multiplyScalar(distance));
+        camera.lookAt(target);
+        controls.target.copy(target);
+        transformHelper.visible = false;
+        boneVisuals.forEach(object => { object.visible = false; });
+        renderer.render(scene, camera);
+        return renderer.domElement.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+      } finally {
+        camera.position.copy(oldPosition); camera.quaternion.copy(oldQuaternion); controls.target.copy(oldTarget);
+        for (const [id, rotation] of oldRotations) boneObjects.get(id)?.rotation.copy(rotation);
+        transformHelper.visible = helperVisible;
+        boneVisuals.forEach((object, index) => { object.visible = boneVisibility[index]; });
+        render();
+      }
+    },
   };
 }

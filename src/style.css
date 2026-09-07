@@ -66,6 +66,9 @@ header.app-header h1 {
   padding: 3px 5px;
   color: #858d95;
 }
+.mcp-status { font-size: 9px; color: #7f8992; }
+.mcp-status::before { content: '●'; margin-right: 4px; color: #66717a; }
+.mcp-status.connected::before { color: #63a875; }
 
 header.app-header .app-tagline {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;

@@ -1,3 +1,5 @@
 .DS_Store
 Thumbs.db
 *.log
+mcp/node_modules/
+mcp/dist/

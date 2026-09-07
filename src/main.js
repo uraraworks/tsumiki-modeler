@@ -1,7 +1,9 @@
 import * as THREE from 'three';
-import { PALETTE_CHARS, applyAnimationFrame, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
+import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
+import { connectMcpBridge } from './bridge.js';
+import { validateModelReport } from './model-validation.js';
 const $ = selector => document.querySelector(selector);
 let doc = createSampleDoc();
 // 選択は一時的なUI状態。モデルの編集状態はdocのみに置く。
@@ -507,6 +509,35 @@ $('#file-input').addEventListener('change', async event => {
   } catch (error) { status(`読込できませんでした：${error.message}`, true); }
   finally { event.target.value = ''; }
 });
+function applyBridgeCommands(commands) {
+  if (playing) stopPlayback();
+  doc = history.executeBatch(doc, commands);
+  activeSample = null;
+  currentFrame = Math.min(currentFrame, (activeAnimation()?.length ?? 1) - 1);
+  refresh(); status(`MCPから${commands.length}件のコマンドを適用しました。`);
+  return { applied: commands.length, model: cloneDoc(doc) };
+}
+function replaceFromBridge(model) {
+  if (playing) stopPlayback();
+  doc = history.replace(doc, model);
+  activeSample = null; currentFrame = 0;
+  selectedId = doc.parts[0]?.id ?? null; selectedBoneId = null;
+  refresh(); status('MCPからモデル全体を差し替えました。');
+  return { model: cloneDoc(doc) };
+}
+function renderBridgePreview(args) {
+  let previewDoc = null;
+  if (args.frame !== undefined) {
+    if (!Number.isSafeInteger(args.frame)) throw new Error('frameは整数で指定してください。');
+    const animation = args.animationId
+      ? doc.animations?.find(candidate => candidate.id === args.animationId)
+      : activeAnimation();
+    if (!animation) throw new Error('プレビュー対象のアニメーションが見つかりません。');
+    if (args.frame < 0 || args.frame >= animation.length) throw new Error(`frameは0〜${animation.length - 1}で指定してください。`);
+    previewDoc = applyAnimationFrame(doc, animation.id, args.frame, THREE);
+  }
+  return { base64: viewport.renderPreview(args, previewDoc), width: 384, height: 216 };
+}
 try {
   viewport = createViewport($('#viewport'), $('#canvas-host'), select, commitTransform, previewTransform, {
     onCommitPaint: command => execute(command, command.partId, 'ペイントしました。'),
@@ -518,6 +549,13 @@ try {
     onBoneTransformPreview: previewBoneTransform,
   });
   setTransformMode(transformMode); setBoneTool(boneTool); refresh();
+  connectMcpBridge({
+    get_model: () => cloneDoc(doc),
+    apply_commands: args => applyBridgeCommands(args.commands),
+    create_from_spec: args => replaceFromBridge(args.model),
+    validate_model: () => validateModelReport(doc),
+    render_preview: renderBridgePreview,
+  }, $('#mcp-status'));
 }
 catch (error) {
   // 部分初期化された viewport で同じ描画エラーを再発させない。

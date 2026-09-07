@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { applyAnimationFrame, calculateBoneWorldTransforms, createBone, createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, interpolateRotation, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { applyAnimationFrame, calculateBoneWorldTransforms, createBlankTexture, createBone, createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, interpolateRotation, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
+import { validateModelReport } from '../src/model-validation.js';
 
 const doc = createSampleDoc();
 assert.doesNotThrow(() => validateDoc(doc));
@@ -205,7 +206,26 @@ assert.ok(Math.abs(fk.get('child').position[1] - 4) < 1e-10, '親の90度回転�
 assert.ok(Math.abs(fk.get('child').matrix[0]) < 1e-10 && Math.abs(fk.get('child').matrix[1] - 1) < 1e-10, '子の最終姿勢へ親の回転を合成する');
 
 const commandBase = createChestSampleDoc();
+const minimalPartDoc = applyCommand(commandBase, {
+  type: 'addPart',
+  part: { name: '頭', type: 'box', position: [0, 12, 0], size: [4, 4, 4] },
+});
+const minimalPart = minimalPartDoc.parts.at(-1);
+assert.deepEqual(minimalPart, {
+  id: 'p4', name: '頭', type: 'box', position: [0, 12, 0], size: [4, 4, 4],
+  radius: 2, height: 4, segments: 8, rotation: [0, 0, 0], color: commandBase.palette[0], bone: null,
+  texture: createBlankTexture({ type: 'box', size: [4, 4, 4] }, commandBase.texelsPerUnit),
+}, '最小フィールドのaddPartへcreatePart相当の既定値を補完する');
+assert.equal(minimalPart.bone, null, 'bone未指定はnullにする');
+assert.throws(() => applyCommand(commandBase, {
+  type: 'addPart',
+  part: { name: '不正ボーン', type: 'box', position: [0, 0, 0], size: [2, 2, 2], bone: 'missing' },
+}), /不正ボーンの所属ボーンが見つかりません/);
 const addedBone = createBone(commandBase, null);
+const minimalBoneDoc = applyCommand(commandBase, { type: 'addBone', bone: {} });
+assert.deepEqual(minimalBoneDoc.bones.at(-1), {
+  id: 'b1', name: 'ボーン 1', parent: null, position: [0, 0, 0], rotation: [0, 0, 0],
+}, 'addBoneの省略可能フィールドへcreateBone相当の既定値を補完する');
 const boneHistory = new CommandHistory();
 const withBone = boneHistory.execute(commandBase, { type: 'addBone', bone: addedBone });
 assert.equal(withBone.bones.length, 1);
@@ -284,5 +304,34 @@ const missingBoneTrack = structuredClone(animationBase); missingBoneTrack.animat
 assert.throws(() => validateDoc(missingBoneTrack), /ボーントラック/);
 const invalidSettings = structuredClone(animationBase); invalidSettings.animations[0].fps = 0;
 assert.throws(() => validateDoc(invalidSettings), /アニメーション/);
+
+const batchBase = createChestSampleDoc();
+const batchHistory = new CommandHistory();
+const batchChanged = batchHistory.executeBatch(batchBase, [
+  { type: 'rename', partId: batchBase.parts[0].id, name: '箱_l' },
+  { type: 'setColor', partId: batchBase.parts[0].id, color: '#e0a070' },
+]);
+assert.equal(batchHistory.past.length, 1, 'バッチ全体を履歴1件にする');
+assert.deepEqual(batchHistory.undo(batchChanged), batchBase, 'バッチ全体を1回でUndoできる');
+const atomicHistory = new CommandHistory();
+assert.throws(() => atomicHistory.executeBatch(batchBase, [
+  { type: 'rename', partId: batchBase.parts[0].id, name: '変更途中' },
+  { type: 'removePart', partId: 'missing' },
+]));
+assert.equal(atomicHistory.past.length, 0, '失敗したバッチは履歴へ追加しない');
+const replacement = structuredClone(batchBase); replacement.name = '差し替え後';
+assert.equal(new CommandHistory().replace(batchBase, replacement).name, '差し替え後');
+
+const warningDoc = structuredClone(batchBase);
+warningDoc.parts[0].name = 'arm_l';
+warningDoc.parts[1].name = warningDoc.parts[2].name;
+const report = validateModelReport(warningDoc);
+assert.equal(report.valid, true);
+assert.ok(report.warnings.some(warning => warning.code === 'unassigned_parts'));
+assert.ok(report.warnings.some(warning => warning.code === 'unused_palette_colors'));
+assert.ok(report.warnings.some(warning => warning.code === 'duplicate_parts_names'));
+assert.ok(report.warnings.some(warning => warning.code === 'unpaired_parts_names'));
+const invalidReportDoc = structuredClone(warningDoc); invalidReportDoc.grid = 0;
+assert.equal(validateModelReport(invalidReportDoc).valid, false);
 
 console.log('model texture tests: OK');

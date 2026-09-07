@@ -73,7 +73,17 @@ function withDefaults(value) {
   return doc;
 }
 export function validateDoc(doc) {
-  if (!doc || doc.version !== 1 || typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100 || !integer(doc.grid, 1) || !integer(doc.texelsPerUnit, 1, 64) || !Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36 || !doc.palette.every(color => /^#[0-9a-f]{6}$/i.test(color)) || !Array.isArray(doc.parts) || doc.parts.length > 1000 || !Array.isArray(doc.bones) || doc.bones.length > 1000 || (doc.animations !== undefined && !Array.isArray(doc.animations))) throw new Error('対応していないModelDocです。version・名前・グリッド・テクスチャ設定・パーツ数を確認してください。');
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error('ModelDocはJSONオブジェクトにしてください。');
+  if (doc.version !== 1) throw new Error('ModelDoc.versionは1にしてください。');
+  if (typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100) throw new Error('ModelDoc.nameは1〜100文字の空白だけでない文字列にしてください。');
+  if (!integer(doc.grid, 1)) throw new Error('ModelDoc.gridは1〜10000の整数にしてください。');
+  if (!integer(doc.texelsPerUnit, 1, 64)) throw new Error('ModelDoc.texelsPerUnitは1〜64の整数にしてください。');
+  if (!Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36) throw new Error('ModelDoc.paletteは1〜36色の配列にしてください。');
+  const invalidColorIndex = doc.palette.findIndex(color => typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color));
+  if (invalidColorIndex >= 0) throw new Error(`ModelDoc.palette[${invalidColorIndex}]は#rrggbb形式の色にしてください。`);
+  if (!Array.isArray(doc.parts) || doc.parts.length > 1000) throw new Error('ModelDoc.partsは最大1000件の配列にしてください。');
+  if (!Array.isArray(doc.bones) || doc.bones.length > 1000) throw new Error('ModelDoc.bonesは最大1000件の配列にしてください。');
+  if (doc.animations !== undefined && !Array.isArray(doc.animations)) throw new Error('ModelDoc.animationsは配列にしてください。');
   const boneIds = new Set();
   for (const bone of doc.bones) {
     if (!bone || typeof bone.id !== 'string' || !bone.id || bone.id.length > 100 || boneIds.has(bone.id)) throw new Error('ボーンIDが空か重複しています。');
