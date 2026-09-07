@@ -67,14 +67,35 @@ function withDefaults(value) {
   if (!doc || typeof doc !== 'object') return doc;
   if (doc.texelsPerUnit === undefined) doc.texelsPerUnit = DEFAULT_TEXELS_PER_UNIT;
   if (doc.palette === undefined) doc.palette = [...DEFAULT_PALETTE];
+  if (doc.bones === undefined) doc.bones = [];
+  if (Array.isArray(doc.parts)) for (const part of doc.parts) if (part?.bone === undefined) part.bone = null;
   return doc;
 }
 export function validateDoc(doc) {
-  if (!doc || doc.version !== 1 || typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100 || !integer(doc.grid, 1) || !integer(doc.texelsPerUnit, 1, 64) || !Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36 || !doc.palette.every(color => /^#[0-9a-f]{6}$/i.test(color)) || !Array.isArray(doc.parts) || doc.parts.length > 1000) throw new Error('対応していないModelDocです。version・名前・グリッド・テクスチャ設定・パーツ数を確認してください。');
+  if (!doc || doc.version !== 1 || typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100 || !integer(doc.grid, 1) || !integer(doc.texelsPerUnit, 1, 64) || !Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36 || !doc.palette.every(color => /^#[0-9a-f]{6}$/i.test(color)) || !Array.isArray(doc.parts) || doc.parts.length > 1000 || !Array.isArray(doc.bones) || doc.bones.length > 1000) throw new Error('対応していないModelDocです。version・名前・グリッド・テクスチャ設定・パーツ数を確認してください。');
+  const boneIds = new Set();
+  for (const bone of doc.bones) {
+    if (!bone || typeof bone.id !== 'string' || !bone.id || bone.id.length > 100 || boneIds.has(bone.id)) throw new Error('ボーンIDが空か重複しています。');
+    boneIds.add(bone.id);
+    if (typeof bone.name !== 'string' || !bone.name.trim() || bone.name.length > 100 || (bone.parent !== null && typeof bone.parent !== 'string')) throw new Error('ボーンの名前または親が不正です。');
+    if (!Array.isArray(bone.position) || bone.position.length !== 3 || !bone.position.every(value => integer(value))) throw new Error('ボーン位置は−10000〜10000の整数にしてください。');
+    if (!Array.isArray(bone.rotation) || bone.rotation.length !== 3 || !bone.rotation.every(value => integer(value, 0, 359))) throw new Error('ボーン回転は0〜359度の整数にしてください。');
+  }
+  for (const bone of doc.bones) if (bone.parent !== null && !boneIds.has(bone.parent)) throw new Error(`${bone.name}の親ボーンが見つかりません。`);
+  const visited = new Set(), visiting = new Set(), bonesById = new Map(doc.bones.map(bone => [bone.id, bone]));
+  const visit = bone => {
+    if (visiting.has(bone.id)) throw new Error('ボーン階層に循環参照があります。');
+    if (visited.has(bone.id)) return;
+    visiting.add(bone.id);
+    if (bone.parent !== null) visit(bonesById.get(bone.parent));
+    visiting.delete(bone.id); visited.add(bone.id);
+  };
+  for (const bone of doc.bones) visit(bone);
   const ids = new Set();
   for (const part of doc.parts) {
     if (!part || typeof part.id !== 'string' || !part.id || part.id.length > 100 || ids.has(part.id)) throw new Error('パーツIDが空か重複しています。');
     ids.add(part.id);
+    if (part.bone !== null && !boneIds.has(part.bone)) throw new Error(`${part.name ?? part.id}の所属ボーンが見つかりません。`);
     if (typeof part.name !== 'string' || !part.name.trim() || part.name.length > 100 || !['box', 'cylinder'].includes(part.type)) throw new Error('パーツの名前または種類が不正です。');
     for (const key of ['position', 'size', 'rotation']) {
       if (!Array.isArray(part[key]) || part[key].length !== 3 || !part[key].every(v => integer(v, key === 'size' ? 1 : -10000))) throw new Error('座標・回転は−10000〜10000の整数、サイズは1〜10000の整数にしてください。');
@@ -94,9 +115,44 @@ export function createPart(doc, type) {
   if (!['box', 'cylinder'].includes(type)) throw new Error('未対応のパーツです。');
   let number = 1;
   while (doc.parts.some(p => p.id === `p${number}`)) number++;
-  const part = { id: `p${number}`, name: `${type === 'box' ? '箱' : '円柱'} ${number}`, type, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: 8, rotation: [0, 0, 0], color: '#e0a070' };
+  const part = { id: `p${number}`, name: `${type === 'box' ? '箱' : '円柱'} ${number}`, type, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: 8, rotation: [0, 0, 0], color: '#e0a070', bone: null };
   part.texture = createBlankTexture(part, doc.texelsPerUnit ?? DEFAULT_TEXELS_PER_UNIT);
   return part;
+}
+export function createBone(doc, parent = null) {
+  let number = 1;
+  while (doc.bones.some(bone => bone.id === `b${number}`)) number++;
+  return { id: `b${number}`, name: `ボーン ${number}`, parent, position: [0, parent ? 2 : 0, 0], rotation: [0, 0, 0] };
+}
+
+// Three.jsに依存しないFK計算。行列は列優先で、T * Rz * Ry * Rx の順に合成する。
+const multiplyMatrix4 = (a, b) => {
+  const result = Array(16).fill(0);
+  for (let column = 0; column < 4; column++) for (let row = 0; row < 4; row++) {
+    for (let index = 0; index < 4; index++) result[column * 4 + row] += a[index * 4 + row] * b[column * 4 + index];
+  }
+  return result;
+};
+const localBoneMatrix = bone => {
+  const [x, y, z] = bone.rotation.map(value => value * Math.PI / 180);
+  const cx = Math.cos(x), sx = Math.sin(x), cy = Math.cos(y), sy = Math.sin(y), cz = Math.cos(z), sz = Math.sin(z);
+  return [
+    cz * cy, sz * cy, -sy, 0,
+    cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx, 0,
+    cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx, 0,
+    bone.position[0], bone.position[1], bone.position[2], 1,
+  ];
+};
+export function calculateBoneWorldTransforms(doc) {
+  const byId = new Map(doc.bones.map(bone => [bone.id, bone])), result = new Map();
+  const calculate = bone => {
+    if (result.has(bone.id)) return result.get(bone.id);
+    const matrix = bone.parent === null ? localBoneMatrix(bone) : multiplyMatrix4(calculate(byId.get(bone.parent)).matrix, localBoneMatrix(bone));
+    const transform = { matrix, position: [matrix[12], matrix[13], matrix[14]] };
+    result.set(bone.id, transform); return transform;
+  };
+  for (const bone of doc.bones) calculate(bone);
+  return result;
 }
 function uniquePartName(doc, preferredName) {
   const names = new Set(doc.parts.map(part => part.name));
@@ -133,7 +189,18 @@ export function mirrorPart(doc, source) {
   return copy;
 }
 export function createSampleDoc() {
-  const doc = { version: 1, name: 'untitled', grid: 1, texelsPerUnit: DEFAULT_TEXELS_PER_UNIT, palette: [...DEFAULT_PALETTE], parts: [] };
+  const doc = {
+    version: 1, name: 'untitled', grid: 1, texelsPerUnit: DEFAULT_TEXELS_PER_UNIT, palette: [...DEFAULT_PALETTE], parts: [],
+    bones: [
+      { id: 'b1', name: '腰', parent: null, position: [0, 4, 0], rotation: [0, 0, 0] },
+      { id: 'b2', name: '胴', parent: 'b1', position: [0, 3, 0], rotation: [0, 0, 0] },
+      { id: 'b3', name: '頭', parent: 'b2', position: [0, 5, 0], rotation: [0, 0, 0] },
+      { id: 'b4', name: '左腕', parent: 'b2', position: [-4, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b5', name: '右腕', parent: 'b2', position: [4, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b6', name: '左脚', parent: 'b1', position: [-2, -2, 0], rotation: [0, 0, 0] },
+      { id: 'b7', name: '右脚', parent: 'b1', position: [2, -2, 0], rotation: [0, 0, 0] },
+    ],
+  };
   const samples = [
     ['頭', [0, 12, 0], [4, 4, 4], '#e0a070'],
     ['胴', [0, 7, 0], [4, 6, 2], '#689caa'],
@@ -142,8 +209,9 @@ export function createSampleDoc() {
     ['左脚', [-2, 2, 0], [2, 4, 2], '#646f8c'],
     ['右脚', [2, 2, 0], [2, 4, 2], '#646f8c'],
   ];
+  const boneByPartName = { '頭': 'b3', '胴': 'b2', '左腕': 'b4', '右腕': 'b5', '左脚': 'b6', '右脚': 'b7' };
   for (const [name, position, size, color] of samples) {
-    const part = { ...createPart(doc, 'box'), name, position, size, color };
+    const part = { ...createPart(doc, 'box'), name, position, size, color, bone: boneByPartName[name] };
     part.texture = createBlankTexture(part, doc.texelsPerUnit);
     doc.parts.push(part);
   }
@@ -157,7 +225,7 @@ export function createChestSampleDoc() {
     grid: 1,
     texelsPerUnit: DEFAULT_TEXELS_PER_UNIT,
     palette: [...DEFAULT_PALETTE, wood, lightWood, metal],
-    parts: [],
+    parts: [], bones: [],
   };
   const samples = [
     ['本体', [0, 3, 0], [10, 6, 6], wood],
@@ -179,7 +247,7 @@ export function createTeapotSampleDoc() {
     grid: 1,
     texelsPerUnit: DEFAULT_TEXELS_PER_UNIT,
     palette: [...DEFAULT_PALETTE],
-    parts: [],
+    parts: [], bones: [],
   };
   const samples = [
     { name: '本体', type: 'cylinder', position: [0, 4, 0], radius: 3, height: 6, segments: 10, color: porcelain },

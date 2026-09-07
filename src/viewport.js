@@ -5,7 +5,10 @@ import { createToonMaterial, createOutlineMaterial } from './materials.js';
 import { createBlankTexture, textureLayout } from './model.js';
 import { applyAtlasUV, createPartCanvasTexture, textureSignature, updatePartCanvasTexturePixel } from './texture.js';
 export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview, paintHandlers = {}) {
-  const { onCommitPaint = () => {}, onHoverPaint = () => {}, onSamplePaint = () => {}, onPreviewPaint = () => {} } = paintHandlers;
+  const {
+    onCommitPaint = () => {}, onHoverPaint = () => {}, onSamplePaint = () => {}, onPreviewPaint = () => {},
+    onSelectBone = () => {}, onBoneTransformCommit = () => {}, onBoneTransformPreview = () => {},
+  } = paintHandlers;
   const clickDragThreshold = 4;
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
@@ -33,7 +36,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   controls.maxDistance = 50000;
   controls.update();
   const defaultMouseButtons = { ...controls.mouseButtons };
-  let scene, pickable = [], mode = 'translate', selectedMesh = null, selectedPart = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
+  let scene, pickable = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate';
+  let selectedMesh = null, selectedPart = null, selectedBoneObject = null, partTransformProxy = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
   let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null, paintSampleStart = null;
   const textureCache = new Map();
   const handleWorldPosition = new THREE.Vector3();
@@ -45,6 +49,11 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       handle.getWorldPosition(handleWorldPosition);
       const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 6 / 216;
       handle.scale.setScalar(worldSize);
+    }
+    for (const marker of boneVisuals.filter(object => object.userData.boneMarker)) {
+      marker.getWorldPosition(handleWorldPosition);
+      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 7 / 216;
+      marker.scale.setScalar(worldSize);
     }
     renderer.render(scene, camera);
   };
@@ -65,28 +74,43 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     if (event.value) {
       const object = transformControls.object;
       const mode = transformControls.getMode();
-      dragStart = object ? { partId: object.userData.partId, mode, transform: readTransform(object, mode) } : null;
+      dragStart = object ? { id: object.userData.partId ?? object.userData.boneId, kind: object.userData.boneId ? 'bone' : 'part', mode, transform: readTransform(object, mode) } : null;
       return;
     }
     const object = transformControls.object, finished = dragStart;
     dragStart = null;
-    if (!object || !finished || object.userData.partId !== finished.partId) return;
+    const id = object?.userData.partId ?? object?.userData.boneId;
+    if (!object || !finished || id !== finished.id) return;
     const transform = readTransform(object, finished.mode);
     if (transform.position) object.position.fromArray(transform.position);
     else object.rotation.set(...transform.rotation.map(THREE.MathUtils.degToRad));
     const key = Object.keys(transform)[0];
-    if (transform[key].some((value, index) => value !== finished.transform[key][index])) onTransformCommit(finished.partId, transform);
+    if (transform[key].some((value, index) => value !== finished.transform[key][index])) {
+      if (finished.kind === 'bone') onBoneTransformCommit(finished.id, transform);
+      else onTransformCommit(finished.id, transform);
+    }
   });
   transformControls.addEventListener('objectChange', () => {
     const object = transformControls.object;
-    if (object) onTransformPreview(object.userData.partId, readTransform(object, transformControls.getMode()));
+    if (!object) return;
+    const transform = readTransform(object, transformControls.getMode());
+    if (object.userData.boneId) onBoneTransformPreview(object.userData.boneId, transform);
+    else {
+      if (selectedMesh && object === partTransformProxy) {
+        if (transform.position) {
+          const bindPosition = selectedPart.bone ? boneObjects.get(selectedPart.bone).userData.bindPosition : [0, 0, 0];
+          selectedMesh.position.fromArray(transform.position.map((value, axis) => value - bindPosition[axis]));
+        } else selectedMesh.rotation.set(...transform.rotation.map(THREE.MathUtils.degToRad));
+      }
+      onTransformPreview(object.userData.partId, transform);
+    }
   });
   const axisVectors = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
   const axisColors = ['#ef5350', '#66bb6a', '#42a5f5'];
   function createResizeHandles(part, mesh) {
     handleGroup = new THREE.Group();
-    handleGroup.position.copy(mesh.position);
-    handleGroup.quaternion.copy(mesh.quaternion);
+    mesh.getWorldPosition(handleGroup.position);
+    mesh.getWorldQuaternion(handleGroup.quaternion);
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const materials = axisColors.map(color => new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }));
     for (let axis = 0; axis < 3; axis++) for (const sign of [-1, 1]) {
@@ -101,8 +125,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   }
   function updateHandleLayout(dimensions) {
     if (!handleGroup || !selectedMesh) return;
-    handleGroup.position.copy(selectedMesh.position);
-    handleGroup.quaternion.copy(selectedMesh.quaternion);
+    selectedMesh.getWorldPosition(handleGroup.position);
+    selectedMesh.getWorldQuaternion(handleGroup.quaternion);
     for (const handle of resizeHandles) {
       const { axis, sign } = handle.userData;
       const extent = selectedPart.type === 'box' ? dimensions.size[axis] / 2 : axis === 1 ? dimensions.height / 2 : dimensions.radius;
@@ -110,7 +134,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     }
   }
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
-  function rebuild(doc, selectedId) {
+  function rebuild(doc, selectedId, selectedBoneId = null) {
     finishPaintStroke(null, false);
     paintSampleStart = null;
     if (resizeDrag) finishResizeDrag(null, false);
@@ -129,12 +153,43 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const activePartIds = new Set(doc.parts.map(part => part.id));
     for (const [partId, cached] of textureCache) if (!activePartIds.has(partId)) { cached.texture.dispose(); textureCache.delete(partId); }
     currentDoc = doc;
-    scene = new THREE.Scene(); pickable = []; resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; currentGrid = doc.grid;
+    scene = new THREE.Scene(); pickable = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid;
     const light = new THREE.DirectionalLight('#ffffff', 1);
     light.position.set(-3, 8, 5);
     const ambient = new THREE.AmbientLight('#ffffff', 0.18);
     scene.add(light, ambient);
     scene.add(new THREE.GridHelper(40 * doc.grid, 40, '#687988', '#3b4a57'));
+    const bindPositions = new Map();
+    const bindPositionFor = bone => {
+      if (bindPositions.has(bone.id)) return bindPositions.get(bone.id);
+      const parent = bone.parent ? bindPositionFor(doc.bones.find(candidate => candidate.id === bone.parent)) : [0, 0, 0];
+      const position = bone.position.map((value, axis) => value + parent[axis]);
+      bindPositions.set(bone.id, position); return position;
+    };
+    for (const bone of doc.bones) {
+      const object = new THREE.Object3D();
+      object.position.fromArray(bone.position);
+      object.rotation.set(...bone.rotation.map(THREE.MathUtils.degToRad));
+      object.userData = { boneId: bone.id, bindPosition: bindPositionFor(bone) };
+      boneObjects.set(bone.id, object);
+    }
+    for (const bone of doc.bones) {
+      const object = boneObjects.get(bone.id);
+      (bone.parent ? boneObjects.get(bone.parent) : scene).add(object);
+      const marker = new THREE.Mesh(
+        new THREE.OctahedronGeometry(1),
+        new THREE.MeshBasicMaterial({ color: bone.id === selectedBoneId ? '#ffe082' : '#66d9ef', depthTest: false, depthWrite: false }),
+      );
+      marker.renderOrder = 2000; marker.userData = { boneId: bone.id, boneMarker: true }; object.add(marker);
+      bonePickable.push(marker); boneVisuals.push(marker);
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3().fromArray(bone.position)]),
+        new THREE.LineBasicMaterial({ color: bone.id === selectedBoneId ? '#ffe082' : '#66d9ef', depthTest: false, depthWrite: false }),
+      );
+      line.renderOrder = 1999; line.userData = { boneId: bone.id };
+      (bone.parent ? boneObjects.get(bone.parent) : scene).add(line); boneVisuals.push(line);
+      if (bone.id === selectedBoneId) selectedBoneObject = object;
+    }
     for (const part of doc.parts) {
       const geometry = part.type === 'box' ? new THREE.BoxGeometry(...part.size) : new THREE.CylinderGeometry(part.radius, part.radius, part.height, part.segments, 1);
       applyAtlasUV(geometry, part, doc.texelsPerUnit);
@@ -147,16 +202,26 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         textureCache.set(part.id, cached);
       }
       const mesh = new THREE.Mesh(geometry, createToonMaterial(part.color, light, ambient, cached?.texture));
-      mesh.position.fromArray(part.position);
+      const bindPosition = part.bone ? bindPositions.get(part.bone) : [0, 0, 0];
+      mesh.position.fromArray(part.position.map((value, axis) => value - bindPosition[axis]));
       mesh.rotation.set(...part.rotation.map(THREE.MathUtils.degToRad));
       mesh.userData.partId = part.id;
       const outline = new THREE.Mesh(geometry, createOutlineMaterial(part.id === selectedId));
       outline.userData.partId = part.id;
-      mesh.add(outline); scene.add(mesh); pickable.push(mesh);
+      mesh.add(outline); (part.bone ? boneObjects.get(part.bone) : scene).add(mesh); pickable.push(mesh);
       if (part.id === selectedId) { selectedMesh = mesh; selectedPart = part; }
     }
+    for (const visual of boneVisuals) visual.visible = mode === 'bone';
+    if (selectedPart) {
+      partTransformProxy = new THREE.Object3D();
+      partTransformProxy.position.fromArray(selectedPart.position);
+      partTransformProxy.rotation.set(...selectedPart.rotation.map(THREE.MathUtils.degToRad));
+      partTransformProxy.userData.partId = selectedPart.id;
+      scene.add(partTransformProxy);
+    }
     scene.add(transformHelper);
-    if (selectedMesh && !['resize', 'paint'].includes(mode)) transformControls.attach(selectedMesh);
+    if (mode === 'bone' && selectedBoneObject) { transformControls.setMode(boneTool); transformControls.attach(selectedBoneObject); }
+    else if (partTransformProxy && !['resize', 'paint'].includes(mode)) transformControls.attach(partTransformProxy);
     else transformControls.detach();
     if (selectedMesh && mode === 'resize') createResizeHandles(selectedPart, selectedMesh);
     render();
@@ -197,7 +262,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       const radius = THREE.MathUtils.clamp(part.radius + sign * snappedDelta, 1, 10000);
       transform = { radius };
       dimensions = { radius, height: part.height };
-      mesh.position.fromArray(part.position);
+      const bindPosition = part.bone ? boneObjects.get(part.bone).userData.bindPosition : [0, 0, 0];
+      mesh.position.fromArray(part.position.map((value, index) => value - bindPosition[index]));
       mesh.scale.set(radius / part.radius, 1, radius / part.radius);
     } else {
       const originalExtent = part.type === 'box' ? part.size[axis] : part.height;
@@ -215,7 +281,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         dimensions = { radius: part.radius, height: extent };
         mesh.scale.set(1, extent / part.height, 1);
       }
-      mesh.position.fromArray(position);
+      const bindPosition = part.bone ? boneObjects.get(part.bone).userData.bindPosition : [0, 0, 0];
+      mesh.position.fromArray(position.map((value, index) => value - bindPosition[index]));
     }
     updateHandleLayout(dimensions);
     drag.transform = transform;
@@ -230,7 +297,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     if (renderer.domElement.hasPointerCapture(drag.pointerId)) renderer.domElement.releasePointerCapture(drag.pointerId);
     if (commit && !sameTransform(drag.transform, originalResizeTransform(drag))) onTransformCommit(drag.part.id, drag.transform);
     else {
-      drag.mesh.position.fromArray(drag.part.position);
+      const bindPosition = drag.part.bone ? boneObjects.get(drag.part.bone).userData.bindPosition : [0, 0, 0];
+      drag.mesh.position.fromArray(drag.part.position.map((value, index) => value - bindPosition[index]));
       drag.mesh.scale.set(1, 1, 1);
       onTransformPreview(drag.part.id, originalResizeTransform(drag));
       updateHandleLayout(drag.part.type === 'box' ? { size: drag.part.size } : { radius: drag.part.radius, height: drag.part.height });
@@ -245,7 +313,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     if (!handle) return;
     event.preventDefault(); event.stopImmediatePropagation();
     const { axis, sign } = handle.userData;
-    const worldAxis = axisVectors[axis].clone().applyQuaternion(selectedMesh.quaternion).normalize();
+    const worldQuaternion = selectedMesh.getWorldQuaternion(new THREE.Quaternion());
+    const worldAxis = axisVectors[axis].clone().applyQuaternion(worldQuaternion).normalize();
     const planeNormal = new THREE.Vector3();
     camera.getWorldDirection(planeNormal);
     planeNormal.addScaledVector(worldAxis, -planeNormal.dot(worldAxis));
@@ -426,6 +495,10 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const down = start; start = null;
     if (!down || down.id !== event.pointerId || down.dragged || Math.hypot(event.clientX - down.x, event.clientY - down.y) > clickDragThreshold) return;
     setRayFromEvent(event);
+    if (mode === 'bone') {
+      const hit = raycaster.intersectObjects(bonePickable, false)[0];
+      if (hit) { onSelectBone(hit.object.userData.boneId); return; }
+    }
     onSelect(raycaster.intersectObjects(pickable, false)[0]?.object.userData.partId ?? null);
   });
   function resetTransformDrag() {
@@ -462,7 +535,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   return {
     rebuild,
     setMode(nextMode) {
-      if (!['translate', 'rotate', 'resize', 'paint'].includes(nextMode)) return;
+      if (!['translate', 'rotate', 'resize', 'paint', 'bone'].includes(nextMode)) return;
       finishResizeDrag(null, false);
       finishPaintStroke(null, false);
       paintSampleStart = null;
@@ -471,17 +544,31 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         ? { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }
         : { ...defaultMouseButtons };
       renderer.domElement.classList.toggle('paint-mode', nextMode === 'paint');
+      for (const visual of boneVisuals) visual.visible = nextMode === 'bone';
       if (nextMode === 'resize') {
         transformControls.detach();
         if (selectedMesh && !handleGroup) createResizeHandles(selectedPart, selectedMesh);
       }
       else if (nextMode === 'paint') transformControls.detach();
+      else if (nextMode === 'bone') {
+        transformControls.setMode(boneTool);
+        if (selectedBoneObject) transformControls.attach(selectedBoneObject); else transformControls.detach();
+      }
       else {
         transformControls.setMode(nextMode);
-        if (selectedMesh) transformControls.attach(selectedMesh);
+        if (partTransformProxy) transformControls.attach(partTransformProxy);
       }
       if (handleGroup) handleGroup.visible = nextMode === 'resize';
       render();
+    },
+    setBoneTool(nextTool) {
+      if (!['translate', 'rotate'].includes(nextTool)) return;
+      boneTool = nextTool;
+      if (mode === 'bone') {
+        transformControls.setMode(boneTool);
+        if (selectedBoneObject) transformControls.attach(selectedBoneObject);
+        render();
+      }
     },
     setPaintSettings(tool, character) {
       if (['pen', 'eraser', 'eyedropper'].includes(tool)) paintTool = tool;

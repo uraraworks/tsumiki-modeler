@@ -30,9 +30,9 @@
     <section class="workspace" aria-label="モデリング画面">
       <div class="view-heading"><span>3D ビュー</span><span id="resolution">384 × 216</span></div>
       <div id="viewport"><div id="canvas-host"></div></div>
-      <div id="view-help" class="view-help">左ドラッグ：回転　／　右ドラッグ：移動　／　ホイール：ズーム　／　W：移動　／　E：回転　／　R：リサイズ　／　P：ペイント</div>
+      <div id="view-help" class="view-help">左ドラッグ：回転　／　右ドラッグ：移動　／　ホイール：ズーム　／　W：移動　／　E：回転　／　R：リサイズ　／　P：ペイント　／　B：ボーン</div>
       <nav class="toolbar" aria-label="編集ツール">
-        <button id="mode-translate" class="mode-button" aria-pressed="true">移動 (W)</button><button id="mode-rotate" class="mode-button" aria-pressed="false">回転 (E)</button><button id="mode-resize" class="mode-button" aria-pressed="false">リサイズ (R)</button><button id="mode-paint" class="mode-button" aria-pressed="false">ペイント (P)</button>
+        <button id="mode-translate" class="mode-button" aria-pressed="true">移動 (W)</button><button id="mode-rotate" class="mode-button" aria-pressed="false">回転 (E)</button><button id="mode-resize" class="mode-button" aria-pressed="false">リサイズ (R)</button><button id="mode-paint" class="mode-button" aria-pressed="false">ペイント (P)</button><button id="mode-bone" class="mode-button" aria-pressed="false">ボーン (B)</button>
         <span class="divider"></span>
         <button id="add-box" class="primary">＋ 箱を追加</button><button id="add-cylinder">＋ 円柱を追加</button><button id="duplicate" disabled>複製</button><button id="mirror" disabled>左右ミラー</button><button id="delete">削除</button>
         <span class="divider"></span><button id="undo">元に戻す</button><button id="redo">やり直す</button>
@@ -42,10 +42,23 @@
       <p id="status" role="status" aria-live="polite">パーツを選んで、つくりはじめましょう。</p>
     </section>
     <aside>
+      <section id="bones-section" class="bones-section" hidden><h2>ボーン <span id="bone-count"></span></h2>
+        <div class="bone-actions"><button id="add-bone" type="button">＋ 追加</button><button id="remove-bone" type="button">削除</button></div>
+        <ul id="bone-tree" aria-label="ボーン階層"></ul>
+        <form id="bone-properties-form" hidden>
+          <label>名前<input id="bone-name" type="text" maxlength="100" required></label>
+          <label>親<select id="bone-parent"></select></label>
+          <fieldset><legend>位置</legend><div class="triple"><label>X<input type="number" step="1" required data-bone-vector="position" data-axis="0"></label><label>Y<input type="number" step="1" required data-bone-vector="position" data-axis="1"></label><label>Z<input type="number" step="1" required data-bone-vector="position" data-axis="2"></label></div></fieldset>
+          <fieldset><legend>回転（度）</legend><div class="triple"><label>X<input type="number" step="1" min="0" max="359" required data-bone-vector="rotation" data-axis="0"></label><label>Y<input type="number" step="1" min="0" max="359" required data-bone-vector="rotation" data-axis="1"></label><label>Z<input type="number" step="1" min="0" max="359" required data-bone-vector="rotation" data-axis="2"></label></div></fieldset>
+          <div class="bone-tools" role="group" aria-label="ボーンギズモ"><button id="bone-move" type="button">移動 (W)</button><button id="bone-rotate" type="button" aria-pressed="true">回転 (E)</button></div>
+        </form>
+        <p id="empty-bone-selection">ボーンを選択してください。</p>
+      </section>
       <section class="parts-section"><h2>パーツ <span id="part-count"></span></h2><ul id="part-list" aria-label="パーツ一覧"></ul></section>
       <section class="properties"><h2>プロパティ <span id="part-type"></span></h2><p id="empty-selection">パーツを選択してください。</p>
         <form id="properties-form" hidden>
           <label>名前<input id="part-name" type="text" maxlength="100" required></label>
+          <label>所属ボーン<select id="part-bone"></select></label>
           <fieldset><legend>位置</legend><div class="triple"><label>X<input type="number" step="1" required data-vector="position" data-axis="0"></label><label>Y<input type="number" step="1" required data-vector="position" data-axis="1"></label><label>Z<input type="number" step="1" required data-vector="position" data-axis="2"></label></div></fieldset>
           <fieldset id="box-fields"><legend>サイズ</legend><div class="triple"><label>X<input type="number" step="1" min="1" required data-vector="size" data-axis="0"></label><label>Y<input type="number" step="1" min="1" required data-vector="size" data-axis="1"></label><label>Z<input type="number" step="1" min="1" required data-vector="size" data-axis="2"></label></div></fieldset>
           <fieldset id="cylinder-fields"><legend>円柱</legend><div class="triple"><label>半径<input type="number" step="1" min="1" required data-scalar="radius"></label><label>高さ<input type="number" step="1" min="1" required data-scalar="height"></label><label>分割数<input type="number" step="1" min="3" max="64" required data-scalar="segments"></label></div></fieldset>

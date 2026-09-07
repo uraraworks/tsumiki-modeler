@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { calculateBoneWorldTransforms, createBone, createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
 
 const doc = createSampleDoc();
 assert.doesNotThrow(() => validateDoc(doc));
 assert.deepEqual(doc.parts.map(part => part.name), ['頭', '胴', '左腕', '右腕', '左脚', '右脚']);
+assert.deepEqual(doc.bones.map(bone => [bone.name, bone.parent]), [
+  ['腰', null], ['胴', 'b1'], ['頭', 'b2'], ['左腕', 'b2'], ['右腕', 'b2'], ['左脚', 'b1'], ['右脚', 'b1'],
+]);
+assert.deepEqual(doc.parts.map(part => [part.name, part.bone]), [
+  ['頭', 'b3'], ['胴', 'b2'], ['左腕', 'b4'], ['右腕', 'b5'], ['左脚', 'b6'], ['右脚', 'b7'],
+]);
 for (const part of doc.parts) assert.doesNotThrow(() => createPartTexturePixels(part, doc.palette));
 assert.equal(doc.texelsPerUnit, 4);
 assert.deepEqual(textureLayout(doc.parts[0], 4).size, [64, 32]);
@@ -126,6 +132,8 @@ const legacy = deserializeDoc(JSON.stringify({ version: 1, name: 'old', grid: 1,
 assert.equal(legacy.texelsPerUnit, 4);
 assert.equal(legacy.palette.length, 8);
 assert.equal(legacy.parts[0].texture, undefined);
+assert.deepEqual(legacy.bones, []);
+assert.equal(legacy.parts[0].bone, null);
 assert.doesNotThrow(() => createPartTexturePixels(legacy.parts[0], legacy.palette));
 assert.equal(createPartTexturePixels(legacy.parts[0], legacy.palette), null);
 
@@ -176,5 +184,60 @@ const textureless = { ...doc, parts: [{ ...structuredClone(textured), texture: u
 const erasedBlank = new CommandHistory();
 assert.equal(erasedBlank.execute(textureless, { type: 'paintPixels', partId: textured.id, pixels: [[0, 0, '.']] }), textureless);
 assert.equal(erasedBlank.past.length, 0, 'textureなしの空ピクセル消去も履歴を発行しない');
+
+const cycleDoc = structuredClone(doc);
+cycleDoc.bones.find(bone => bone.id === 'b1').parent = 'b3';
+assert.throws(() => validateDoc(cycleDoc), /循環参照/);
+
+const fkDoc = {
+  ...structuredClone(doc), parts: [], bones: [
+    { id: 'root', name: 'root', parent: null, position: [1, 2, 0], rotation: [0, 0, 90] },
+    { id: 'child', name: 'child', parent: 'root', position: [2, 0, 0], rotation: [0, 0, 0] },
+  ],
+};
+const fk = calculateBoneWorldTransforms(validateDoc(fkDoc));
+assert.ok(Math.abs(fk.get('child').position[0] - 1) < 1e-10);
+assert.ok(Math.abs(fk.get('child').position[1] - 4) < 1e-10, '親の90度回転で子の相対XがワールドYへ向く');
+assert.ok(Math.abs(fk.get('child').matrix[0]) < 1e-10 && Math.abs(fk.get('child').matrix[1] - 1) < 1e-10, '子の最終姿勢へ親の回転を合成する');
+
+const commandBase = createChestSampleDoc();
+const addedBone = createBone(commandBase, null);
+const boneHistory = new CommandHistory();
+const withBone = boneHistory.execute(commandBase, { type: 'addBone', bone: addedBone });
+assert.equal(withBone.bones.length, 1);
+assert.deepEqual(boneHistory.undo(withBone), commandBase, 'addBoneをUndoできる');
+let commandDoc = applyCommand(commandBase, { type: 'addBone', bone: addedBone });
+commandDoc = applyCommand(commandDoc, { type: 'renameBone', boneId: addedBone.id, name: 'root' });
+assert.equal(commandDoc.bones[0].name, 'root');
+commandDoc = applyCommand(commandDoc, { type: 'setBoneTransform', boneId: addedBone.id, transform: { position: [1, 2, 3], rotation: [15, 30, 45] } });
+assert.deepEqual(commandDoc.bones[0].position, [1, 2, 3]);
+const childBone = { ...createBone(commandDoc, null), parent: addedBone.id };
+commandDoc = applyCommand(commandDoc, { type: 'addBone', bone: childBone });
+commandDoc = applyCommand(commandDoc, { type: 'setBoneParent', boneId: childBone.id, parent: null });
+assert.equal(commandDoc.bones.find(bone => bone.id === childBone.id).parent, null);
+commandDoc = applyCommand(commandDoc, { type: 'assignPartBone', partId: commandDoc.parts[0].id, boneId: addedBone.id });
+assert.equal(commandDoc.parts[0].bone, addedBone.id);
+const removeHistory = new CommandHistory();
+const removed = removeHistory.execute(commandDoc, { type: 'removeBone', boneId: addedBone.id });
+assert.equal(removed.parts[0].bone, null);
+assert.deepEqual(removeHistory.undo(removed), commandDoc, 'removeBoneと割り当て解除をまとめてUndoできる');
+const subtreeDoc = applyCommand(commandDoc, { type: 'setBoneParent', boneId: childBone.id, parent: addedBone.id });
+const assignedToChild = applyCommand(subtreeDoc, { type: 'assignPartBone', partId: subtreeDoc.parts[1].id, boneId: childBone.id });
+const removedSubtree = applyCommand(assignedToChild, { type: 'removeBone', boneId: addedBone.id });
+assert.deepEqual(removedSubtree.bones, [], '子孫ボーンもまとめて削除する');
+assert.equal(removedSubtree.parts[1].bone, null, '子孫ボーン所属のパーツも解除する');
+
+const parentHistory = new CommandHistory();
+const reparented = parentHistory.execute(commandDoc, { type: 'setBoneParent', boneId: childBone.id, parent: addedBone.id });
+assert.deepEqual(parentHistory.undo(reparented), commandDoc, 'setBoneParentをUndoできる');
+const transformHistory = new CommandHistory();
+const transformedBone = transformHistory.execute(commandDoc, { type: 'setBoneTransform', boneId: addedBone.id, transform: { rotation: [0, 0, 90] } });
+assert.deepEqual(transformHistory.undo(transformedBone), commandDoc, 'setBoneTransformをUndoできる');
+const renameHistory = new CommandHistory();
+const renamedBone = renameHistory.execute(commandDoc, { type: 'renameBone', boneId: addedBone.id, name: 'renamed' });
+assert.deepEqual(renameHistory.undo(renamedBone), commandDoc, 'renameBoneをUndoできる');
+const assignHistory = new CommandHistory();
+const unassigned = assignHistory.execute(commandDoc, { type: 'assignPartBone', partId: commandDoc.parts[0].id, boneId: null });
+assert.deepEqual(assignHistory.undo(unassigned), commandDoc, 'assignPartBoneをUndoできる');
 
 console.log('model texture tests: OK');

@@ -3,6 +3,28 @@ import { PALETTE_CHARS, cloneDoc, createBlankTexture, resizePartTexture, validat
 export function applyCommand(doc, cmd) {
   const next = cloneDoc(doc);
   if (cmd.type === 'addPart') next.parts.push(cloneDoc(cmd.part));
+  else if (cmd.type === 'addBone') next.bones.push(cloneDoc(cmd.bone));
+  else if (['removeBone', 'setBoneTransform', 'setBoneParent', 'renameBone'].includes(cmd.type)) {
+    const index = next.bones.findIndex(bone => bone.id === cmd.boneId);
+    if (index < 0) throw new Error('対象のボーンが見つかりません。');
+    const bone = next.bones[index];
+    if (cmd.type === 'removeBone') {
+      const removed = new Set([bone.id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const candidate of next.bones) if (removed.has(candidate.parent) && !removed.has(candidate.id)) { removed.add(candidate.id); changed = true; }
+      }
+      next.bones = next.bones.filter(candidate => !removed.has(candidate.id));
+      for (const part of next.parts) if (removed.has(part.bone)) part.bone = null;
+    } else if (cmd.type === 'setBoneTransform') {
+      for (const [key, value] of Object.entries(cmd.transform)) {
+        if (!['position', 'rotation'].includes(key)) throw new Error('未対応のボーン変形プロパティです。');
+        bone[key] = structuredClone(value);
+      }
+    } else if (cmd.type === 'setBoneParent') bone.parent = cmd.parent;
+    else bone.name = cmd.name;
+  }
   else {
     const index = next.parts.findIndex(p => p.id === cmd.partId);
     if (index < 0) throw new Error('対象のパーツが見つかりません。');
@@ -19,6 +41,7 @@ export function applyCommand(doc, cmd) {
         break;
       case 'setColor': part.color = cmd.color; break;
       case 'rename': part.name = cmd.name; break;
+      case 'assignPartBone': part.bone = cmd.boneId; break;
       case 'paintPixels': {
         if (!Array.isArray(cmd.pixels)) throw new Error('ペイント内容が不正です。');
         const pixels = new Map();
