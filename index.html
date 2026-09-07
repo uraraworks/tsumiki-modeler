@@ -29,7 +29,20 @@
   </header>
   <main>
     <section class="workspace" aria-label="モデリング画面">
-      <div class="view-heading"><span>3D ビュー</span><span id="resolution">384 × 216</span></div>
+      <div class="view-heading">
+        <span>3D ビュー</span>
+        <div class="outline-settings" aria-label="アウトライン設定">
+          <span class="outline-label">輪郭</span>
+          <div class="outline-switch" role="group" aria-label="アウトライン方式">
+            <button type="button" data-outline-mode="edge" aria-pressed="true">エッジ検出</button>
+            <button type="button" data-outline-mode="inverted" aria-pressed="false">逆押し出し</button>
+            <button type="button" data-outline-mode="none" aria-pressed="false">なし</button>
+          </div>
+          <label title="手前と奥の境界を検出する相対深度差">深度<input id="outline-depth" type="range" min="0" max="0.15" step="0.005" value="0.06"><output id="outline-depth-value">0.060</output></label>
+          <label title="折れ曲がりを検出する法線差">法線<input id="outline-normal" type="range" min="0" max="1" step="0.01" value="0.2"><output id="outline-normal-value">0.20</output></label>
+        </div>
+        <span id="resolution">384 × 216</span>
+      </div>
       <div id="viewport"><div id="canvas-host"></div></div>
       <section id="timeline" class="timeline" aria-label="アニメーションタイムライン" hidden>
         <div class="timeline-controls">

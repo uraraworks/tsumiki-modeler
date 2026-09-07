@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createToonMaterial, createOutlineMaterial } from './materials.js';
+import { createToonMaterial, createOutlineMaterial, createEdgeCompositeMaterial } from './materials.js';
 import { createBlankTexture, textureLayout } from './model.js';
 import { applyAtlasUV, createPartCanvasTexture, textureSignature, updatePartCanvasTexturePixel } from './texture.js';
 export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview, paintHandlers = {}) {
@@ -15,6 +15,24 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   renderer.setSize(384, 216, false);
   renderer.setClearColor('#242e39');
   host.append(renderer.domElement);
+  const modelLayer = 1;
+  const colorTarget = new THREE.WebGLRenderTarget(384, 216, {
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+    depthBuffer: true, stencilBuffer: false,
+  });
+  const normalTarget = new THREE.WebGLRenderTarget(384, 216, {
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+    depthBuffer: true, stencilBuffer: false,
+  });
+  normalTarget.depthTexture = new THREE.DepthTexture(384, 216, THREE.UnsignedIntType);
+  normalTarget.depthTexture.format = THREE.DepthFormat;
+  normalTarget.depthTexture.minFilter = THREE.NearestFilter;
+  normalTarget.depthTexture.magFilter = THREE.NearestFilter;
+  const normalMaterial = new THREE.MeshNormalMaterial();
+  const edgeMaterial = createEdgeCompositeMaterial(colorTarget.texture, normalTarget.texture, normalTarget.depthTexture);
+  const compositeScene = new THREE.Scene();
+  const compositeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  compositeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), edgeMaterial));
   renderer.domElement.setAttribute('aria-label', '3Dモデル。ドラッグで回転、クリックでパーツを選択');
   const activePointerIds = new Set(), endingPointerIds = new Set(), cancellingPointerIds = new Set();
   renderer.domElement.addEventListener('pointerdown', event => activePointerIds.add(event.pointerId), true);
@@ -29,6 +47,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     queueMicrotask(() => cancellingPointerIds.delete(event.pointerId));
   }, true);
   const camera = new THREE.PerspectiveCamera(38, 384 / 216, 0.1, 100000);
+  camera.layers.enable(modelLayer);
   camera.position.set(18, 16, 23);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 6, 0);
@@ -36,10 +55,51 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   controls.maxDistance = 50000;
   controls.update();
   const defaultMouseButtons = { ...controls.mouseButtons };
-  let scene, gridHelper, pickable = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate';
+  let scene, gridHelper, pickable = [], outlineMeshes = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate';
   let selectedMesh = null, selectedPart = null, selectedBoneObject = null, partTransformProxy = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
   let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null, paintSampleStart = null;
+  let outlineMode = 'edge';
   const textureCache = new Map();
+  const clearColor = new THREE.Color();
+  function renderScene(activeCamera) {
+    if (outlineMode !== 'edge') {
+      renderer.setRenderTarget(null);
+      renderer.render(scene, activeCamera);
+      return;
+    }
+    const oldLayerMask = activeCamera.layers.mask;
+    const oldOverrideMaterial = scene.overrideMaterial;
+    const oldClearColor = renderer.getClearColor(clearColor).clone();
+    const oldClearAlpha = renderer.getClearAlpha();
+    try {
+      activeCamera.layers.set(modelLayer);
+      scene.overrideMaterial = normalMaterial;
+      renderer.setClearColor('#000000', 0);
+      renderer.setRenderTarget(normalTarget);
+      renderer.clear();
+      renderer.render(scene, activeCamera);
+
+      activeCamera.layers.mask = oldLayerMask;
+      scene.overrideMaterial = oldOverrideMaterial;
+      renderer.setClearColor(oldClearColor, oldClearAlpha);
+      renderer.setRenderTarget(colorTarget);
+      renderer.clear();
+      renderer.render(scene, activeCamera);
+
+      edgeMaterial.uniforms.cameraNear.value = activeCamera.near;
+      edgeMaterial.uniforms.cameraFar.value = activeCamera.far;
+      renderer.setRenderTarget(null);
+      renderer.render(compositeScene, compositeCamera);
+    } finally {
+      activeCamera.layers.mask = oldLayerMask;
+      scene.overrideMaterial = oldOverrideMaterial;
+      renderer.setClearColor(oldClearColor, oldClearAlpha);
+      renderer.setRenderTarget(null);
+    }
+  }
+  function updateOutlineVisibility() {
+    for (const outline of outlineMeshes) outline.visible = outlineMode === 'inverted' || outline.userData.selected;
+  }
   const handleWorldPosition = new THREE.Vector3();
   const render = () => {
     if (!scene) return;
@@ -55,7 +115,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 7 / 216;
       marker.scale.setScalar(worldSize);
     }
-    renderer.render(scene, camera);
+    renderScene(camera);
   };
   controls.addEventListener('change', render);
   const transformControls = new TransformControls(camera, renderer.domElement);
@@ -153,7 +213,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const activePartIds = new Set(doc.parts.map(part => part.id));
     for (const [partId, cached] of textureCache) if (!activePartIds.has(partId)) { cached.texture.dispose(); textureCache.delete(partId); }
     currentDoc = doc;
-    scene = new THREE.Scene(); pickable = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid;
+    scene = new THREE.Scene(); pickable = []; outlineMeshes = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid;
     const light = new THREE.DirectionalLight('#ffffff', 1);
     light.position.set(-3, 8, 5);
     const ambient = new THREE.AmbientLight('#ffffff', 0.18);
@@ -207,11 +267,13 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       mesh.position.fromArray(part.position.map((value, axis) => value - bindPosition[axis]));
       mesh.rotation.set(...part.rotation.map(THREE.MathUtils.degToRad));
       mesh.userData.partId = part.id;
+      mesh.layers.set(modelLayer);
       const outline = new THREE.Mesh(geometry, createOutlineMaterial(part.id === selectedId));
-      outline.userData.partId = part.id;
-      mesh.add(outline); (part.bone ? boneObjects.get(part.bone) : scene).add(mesh); pickable.push(mesh);
+      outline.userData = { partId: part.id, selected: part.id === selectedId };
+      mesh.add(outline); outlineMeshes.push(outline); (part.bone ? boneObjects.get(part.bone) : scene).add(mesh); pickable.push(mesh);
       if (part.id === selectedId) { selectedMesh = mesh; selectedPart = part; }
     }
+    updateOutlineVisibility();
     for (const visual of boneVisuals) visual.visible = ['bone', 'animation'].includes(mode);
     if (selectedPart) {
       partTransformProxy = new THREE.Object3D();
@@ -241,6 +303,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   new ResizeObserver(resize).observe(container);
   resize();
   const raycaster = new THREE.Raycaster();
+  raycaster.layers.enable(modelLayer);
   const pointer = new THREE.Vector2();
   const setRayFromEvent = event => {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -617,6 +680,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
           Math.cos(azimuth) * Math.cos(elevation),
         );
         const previewCamera = new THREE.PerspectiveCamera(camera.fov, 384 / 216, camera.near, camera.far);
+        previewCamera.layers.enable(modelLayer);
         if (Math.abs(direction.y) > .9999) previewCamera.up.set(0, 0, direction.y > 0 ? -1 : 1);
         previewCamera.position.copy(target).add(direction);
         previewCamera.lookAt(target);
@@ -643,7 +707,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         gridHelper.visible = false;
         if (handleGroup) handleGroup.visible = false;
         boneVisuals.forEach(object => { object.visible = false; });
-        renderer.render(scene, previewCamera);
+        renderScene(previewCamera);
         return renderer.domElement.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
       } finally {
         for (const [id, rotation] of oldRotations) boneObjects.get(id)?.rotation.copy(rotation);
@@ -653,6 +717,13 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         boneVisuals.forEach((object, index) => { object.visible = boneVisibility[index]; });
         render();
       }
+    },
+    setOutlineSettings(settings = {}) {
+      if (['edge', 'inverted', 'none'].includes(settings.mode)) outlineMode = settings.mode;
+      if (Number.isFinite(settings.depthThreshold)) edgeMaterial.uniforms.depthThreshold.value = THREE.MathUtils.clamp(settings.depthThreshold, 0, 1);
+      if (Number.isFinite(settings.normalThreshold)) edgeMaterial.uniforms.normalThreshold.value = THREE.MathUtils.clamp(settings.normalThreshold, 0, 2);
+      updateOutlineVisibility();
+      render();
     },
   };
 }

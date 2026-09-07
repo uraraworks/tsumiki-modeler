@@ -23,6 +23,7 @@ let playbackRequest = 0;
 let playbackStartTime = 0;
 let playbackStartFrame = 0;
 let timelineDragging = false;
+let outlineMode = 'edge';
 const activeAnimation = () => doc.animations?.[0] ?? null;
 const status = (message, error = false) => {
   $('#status').textContent = message;
@@ -327,6 +328,24 @@ $('#mode-resize').addEventListener('click', () => setTransformMode('resize'));
 $('#mode-paint').addEventListener('click', () => setTransformMode('paint'));
 $('#mode-bone').addEventListener('click', () => setTransformMode('bone'));
 $('#mode-animation').addEventListener('click', () => setTransformMode(transformMode === 'animation' ? 'translate' : 'animation'));
+function updateOutlineSettings() {
+  const depthThreshold = Number($('#outline-depth').value);
+  const normalThreshold = Number($('#outline-normal').value);
+  for (const button of document.querySelectorAll('[data-outline-mode]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.outlineMode === outlineMode));
+  }
+  $('#outline-depth-value').value = depthThreshold.toFixed(3);
+  $('#outline-normal-value').value = normalThreshold.toFixed(2);
+  $('#outline-depth').disabled = outlineMode !== 'edge';
+  $('#outline-normal').disabled = outlineMode !== 'edge';
+  viewport?.setOutlineSettings({ mode: outlineMode, depthThreshold, normalThreshold });
+}
+for (const button of document.querySelectorAll('[data-outline-mode]')) button.addEventListener('click', () => {
+  outlineMode = button.dataset.outlineMode;
+  updateOutlineSettings();
+});
+$('#outline-depth').addEventListener('input', updateOutlineSettings);
+$('#outline-normal').addEventListener('input', updateOutlineSettings);
 $('#animation-play').addEventListener('click', () => playing ? stopPlayback() : startPlayback());
 $('#animation-prev').addEventListener('click', () => { stopPlayback(); setCurrentFrame(currentFrame - 1); });
 $('#animation-next').addEventListener('click', () => { stopPlayback(); setCurrentFrame(currentFrame + 1); });
@@ -551,7 +570,7 @@ try {
     onBoneTransformCommit: commitBoneTransform,
     onBoneTransformPreview: previewBoneTransform,
   });
-  setTransformMode(transformMode); setBoneTool(boneTool); refresh();
+  setTransformMode(transformMode); setBoneTool(boneTool); updateOutlineSettings(); refresh();
   connectMcpBridge({
     get_model: () => cloneDoc(doc),
     apply_commands: args => applyBridgeCommands(args.commands),
