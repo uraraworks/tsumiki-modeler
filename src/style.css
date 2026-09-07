@@ -126,6 +126,9 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; }
 .toolbar-label { align-self: center; color: #aab7c4; font-size: 11px; }
 .sample-switch { display: flex; gap: 4px; }
 .sample-switch button[aria-pressed=true] { background: #526474; border-color: #f0bf78; color: #fff2d8; box-shadow: inset 0 0 0 1px #f0bf78; }
+.face-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.mesh-submode-switch { display: flex; gap: 4px; }
+.mesh-submode-switch button[aria-pressed=true] { background: #526474; border-color: #f0bf78; color: #fff2d8; box-shadow: inset 0 0 0 1px #f0bf78; }
 button { font: inherit; color: inherit; border: 1px solid #46515c; background: #28313a; border-radius: 5px; padding: 9px 11px; cursor: pointer; }
 button:hover { background: #35424e; border-color: #8494a3; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #f0bf78; outline-offset: 2px; }

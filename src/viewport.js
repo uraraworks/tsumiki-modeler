@@ -9,7 +9,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const {
     onCommitPaint = () => {}, onHoverPaint = () => {}, onSamplePaint = () => {}, onPreviewPaint = () => {},
     onSelectBone = () => {}, onBoneTransformCommit = () => {}, onBoneTransformPreview = () => {},
-    onSelectFace = () => {},
+    onSelectFace = () => {}, onSelectVertex = () => {}, onMoveVertices = () => {},
   } = paintHandlers;
   const clickDragThreshold = 4;
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
@@ -57,9 +57,10 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   controls.maxDistance = 50000;
   controls.update();
   const defaultMouseButtons = { ...controls.mouseButtons };
-  let scene, gridHelper, pickable = [], outlineMeshes = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate';
+  let scene, gridHelper, pickable = [], outlineMeshes = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate', meshSubmode = 'vertex';
   let selectedMesh = null, selectedPart = null, selectedBoneObject = null, partTransformProxy = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
   let selectedFaceIndices = [], faceHighlightMesh = null;
+  let selectedVertexIndices = [], vertexMarkers = [], vertexMarkerMaterials = null, vertexTransformProxy = null, vertexDrag = null;
   let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null, paintSampleStart = null;
   let outlineMode = 'edge';
   const textureCache = new Map();
@@ -113,6 +114,12 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 6 / 216;
       handle.scale.setScalar(worldSize);
     }
+    // 頂点マーカーも面ハンドルと同様、384x216上で常に一定の見かけサイズ（掴める大きさ）になるよう毎フレーム換算する。
+    for (const marker of vertexMarkers) {
+      marker.getWorldPosition(handleWorldPosition);
+      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 5 / 216;
+      marker.scale.setScalar(worldSize);
+    }
     for (const marker of boneVisuals.filter(object => object.userData.boneMarker)) {
       marker.getWorldPosition(handleWorldPosition);
       const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 7 / 216;
@@ -134,6 +141,24 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   let dragStart = null;
   transformControls.addEventListener('dragging-changed', event => {
     controls.enabled = !event.value;
+    const draggedObject = transformControls.object;
+    if (draggedObject?.userData.vertexProxy) {
+      if (event.value) {
+        vertexDrag = {
+          initialPosition: draggedObject.position.clone(),
+          inverseQuaternion: selectedMesh.getWorldQuaternion(new THREE.Quaternion()).invert(),
+          originals: new Map(selectedVertexIndices.map(index => [index, [...selectedPart.vertices[index]]])),
+          lastDelta: [0, 0, 0],
+        };
+      } else {
+        const drag = vertexDrag;
+        vertexDrag = null;
+        const moved = drag && drag.lastDelta.some(value => value !== 0);
+        if (moved) onMoveVertices(selectedPart.id, [...selectedVertexIndices], drag.lastDelta);
+        else updateVertexTransformProxy(); // 変化なし：プロキシ位置を選択頂点の重心へ戻す（doc変更が無いためrebuildは来ない）。
+      }
+      return;
+    }
     if (event.value) {
       const object = transformControls.object;
       const mode = transformControls.getMode();
@@ -156,6 +181,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   transformControls.addEventListener('objectChange', () => {
     const object = transformControls.object;
     if (!object) return;
+    if (object.userData.vertexProxy) { updateVertexDragPreview(object); return; }
     const transform = readTransform(object, transformControls.getMode());
     if (object.userData.boneId) onBoneTransformPreview(object.userData.boneId, transform);
     else {
@@ -204,7 +230,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   }
   function updateFaceHighlight() {
     disposeFaceHighlight();
-    if (mode !== 'face' || !selectedMesh || selectedPart?.type !== 'mesh' || !selectedFaceIndices.length) { render(); return; }
+    if (mode !== 'face' || meshSubmode !== 'face' || !selectedMesh || selectedPart?.type !== 'mesh' || !selectedFaceIndices.length) { render(); return; }
     const faceIndices = selectedMesh.geometry.userData?.meshFaceIndices;
     const positionAttr = selectedMesh.geometry.getAttribute('position');
     if (!faceIndices || !positionAttr) { render(); return; }
@@ -225,11 +251,89 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     selectedMesh.add(faceHighlightMesh);
     render();
   }
+  // 頂点編集サブモード用：mesh の各頂点を小さな球で表示する。selectedMesh の子として追加するため、
+  // パーツ自身の位置・回転を自動的に継承する（面ハイライトと同じ作り）。depthTest無効＋高いrenderOrderで
+  // 常に手前に描き、見かけサイズは render() 内で毎フレーム一定になるよう換算する。
+  function disposeVertexMarkers() {
+    for (const marker of vertexMarkers) marker.parent?.remove(marker);
+    vertexMarkers = [];
+    vertexMarkerMaterials = null;
+  }
+  function buildVertexMarkers(part, mesh) {
+    disposeVertexMarkers();
+    const geometry = new THREE.SphereGeometry(1, 6, 6);
+    vertexMarkerMaterials = [
+      new THREE.MeshBasicMaterial({ color: '#8fd3e8', depthTest: false, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: '#ffd54f', depthTest: false, depthWrite: false }),
+    ];
+    const selectedSet = new Set(selectedVertexIndices);
+    vertexMarkers = part.vertices.map((vertex, index) => {
+      const marker = new THREE.Mesh(geometry, vertexMarkerMaterials[selectedSet.has(index) ? 1 : 0]);
+      marker.position.fromArray(vertex);
+      marker.renderOrder = 1200;
+      marker.userData = { vertexIndex: index };
+      mesh.add(marker);
+      return marker;
+    });
+    updateVertexMarkerVisibility();
+  }
+  function updateVertexMarkerVisibility() {
+    const visible = mode === 'face' && meshSubmode === 'vertex';
+    for (const marker of vertexMarkers) marker.visible = visible;
+  }
+  function updateVertexMarkerColors() {
+    if (!vertexMarkerMaterials) return;
+    const selectedSet = new Set(selectedVertexIndices);
+    for (const marker of vertexMarkers) marker.material = vertexMarkerMaterials[selectedSet.has(marker.userData.vertexIndex) ? 1 : 0];
+  }
+  // 選択頂点群の重心へ移動ギズモを置く。世界座標系のプロキシを scene 直下に置き、
+  // ドラッグ量は mesh の実際のワールド回転（ボーンの回転も含む）の逆回転でパーツローカルへ変換する
+  // （readTransformなど他のギズモと同様、TransformControls既定のワールド空間ドラッグに合わせる）。
+  function updateVertexTransformProxy() {
+    if (vertexTransformProxy) { vertexTransformProxy.parent?.remove(vertexTransformProxy); vertexTransformProxy = null; }
+    const active = mode === 'face' && meshSubmode === 'vertex' && selectedMesh && selectedPart?.type === 'mesh' && selectedVertexIndices.length > 0;
+    if (!active) {
+      if (transformControls.object?.userData.vertexProxy) transformControls.detach();
+      return;
+    }
+    const centroid = selectedVertexIndices.reduce((sum, index) => {
+      const vertex = selectedPart.vertices[index];
+      return [sum[0] + vertex[0], sum[1] + vertex[1], sum[2] + vertex[2]];
+    }, [0, 0, 0]).map(component => component / selectedVertexIndices.length);
+    vertexTransformProxy = new THREE.Object3D();
+    vertexTransformProxy.position.copy(selectedMesh.localToWorld(new THREE.Vector3(...centroid)));
+    vertexTransformProxy.userData = { vertexProxy: true };
+    scene.add(vertexTransformProxy);
+    transformControls.setMode('translate');
+    transformControls.attach(vertexTransformProxy);
+  }
+  // ドラッグ中のプレビュー：選択頂点それぞれへ同じ整数delta（ワールド移動量をパーツのワールド回転の
+  // 逆回転でローカルへ変換し、1グリッド単位へ丸めたもの）を加え、ジオメトリとマーカー位置を更新する。
+  // 頂点座標は常に整数を保つ要件があるため、回転済みパーツでも最終的に整数へ丸める。
+  function updateVertexDragPreview(object) {
+    if (!vertexDrag || !selectedPart || selectedPart.type !== 'mesh' || !selectedMesh) return;
+    const worldDelta = object.position.clone().sub(vertexDrag.initialPosition);
+    const localDelta = worldDelta.applyQuaternion(vertexDrag.inverseQuaternion);
+    const delta = [Math.round(localDelta.x), Math.round(localDelta.y), Math.round(localDelta.z)];
+    if (delta.every((value, index) => value === vertexDrag.lastDelta[index])) return;
+    vertexDrag.lastDelta = delta;
+    const previewPart = structuredClone(selectedPart);
+    for (const [index, original] of vertexDrag.originals) {
+      previewPart.vertices[index] = original.map((coordinate, axis) => coordinate + delta[axis]);
+    }
+    replacePreviewGeometry(selectedMesh, previewPart);
+    for (const marker of vertexMarkers) {
+      const original = vertexDrag.originals.get(marker.userData.vertexIndex);
+      if (original) marker.position.fromArray(previewPart.vertices[marker.userData.vertexIndex]);
+    }
+    render();
+  }
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
   function rebuild(doc, selectedId, selectedBoneId = null) {
     finishPaintStroke(null, false);
     paintSampleStart = null;
     if (resizeDrag) finishResizeDrag(null, false);
+    vertexDrag = null;
     controls.enabled = true;
     if (scene) {
       // ギズモのGPU資源は再利用するため、旧シーンの破棄対象から外す。
@@ -245,7 +349,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const activePartIds = new Set(doc.parts.map(part => part.id));
     for (const [partId, cached] of textureCache) if (!activePartIds.has(partId)) { cached.texture.dispose(); textureCache.delete(partId); }
     currentDoc = doc;
-    scene = new THREE.Scene(); pickable = []; outlineMeshes = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid; faceHighlightMesh = null;
+    scene = new THREE.Scene(); pickable = []; outlineMeshes = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid; faceHighlightMesh = null; vertexMarkers = []; vertexMarkerMaterials = null; vertexTransformProxy = null;
     const light = new THREE.DirectionalLight('#ffffff', 1);
     light.position.set(-3, 8, 5);
     const ambient = new THREE.AmbientLight('#ffffff', 0.18);
@@ -319,7 +423,9 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     else if (partTransformProxy && ['translate', 'rotate'].includes(mode)) transformControls.attach(partTransformProxy);
     else transformControls.detach();
     if (selectedMesh && mode === 'resize') createResizeHandles(selectedPart, selectedMesh);
+    if (selectedMesh && selectedPart?.type === 'mesh') buildVertexMarkers(selectedPart, selectedMesh);
     updateFaceHighlight();
+    updateVertexTransformProxy();
     render();
   }
   let displayScale = 0;
@@ -629,6 +735,13 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       const hit = raycaster.intersectObjects(bonePickable, false)[0];
       if (hit) { onSelectBone(hit.object.userData.boneId); return; }
     }
+    if (mode === 'face' && meshSubmode === 'vertex' && selectedMesh && selectedPart?.type === 'mesh') {
+      // 頂点サブモードでは、マーカーに当たらなかった（＝何もない所をクリックした）場合も
+      // ここで終わらせ、パーツ選択自体は変えない（頂点選択の解除だけを行う）。
+      const hit = raycaster.intersectObjects(vertexMarkers, false)[0];
+      onSelectVertex(hit ? hit.object.userData.vertexIndex : null, event.shiftKey);
+      return;
+    }
     if (mode === 'face' && selectedMesh && selectedPart?.type === 'mesh') {
       const intersection = raycaster.intersectObject(selectedMesh, false)[0];
       const faceIndices = selectedMesh.geometry.userData?.meshFaceIndices;
@@ -685,7 +798,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         transformControls.detach();
         if (selectedMesh && !handleGroup) createResizeHandles(selectedPart, selectedMesh);
       }
-      else if (['paint', 'face'].includes(nextMode)) transformControls.detach();
+      else if (nextMode === 'paint') transformControls.detach();
+      else if (nextMode === 'face') transformControls.detach(); // updateVertexTransformProxy()が該当時に再アタッチする
       else if (['bone', 'animation'].includes(nextMode)) {
         transformControls.setMode(nextMode === 'animation' ? 'rotate' : boneTool);
         if (selectedBoneObject) transformControls.attach(selectedBoneObject); else transformControls.detach();
@@ -696,11 +810,28 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       }
       if (handleGroup) handleGroup.visible = nextMode === 'resize';
       updateFaceHighlight();
+      updateVertexMarkerVisibility();
+      updateVertexTransformProxy();
+      render();
+    },
+    setMeshSubmode(nextSubmode) {
+      if (!['vertex', 'face'].includes(nextSubmode) || nextSubmode === meshSubmode) return;
+      meshSubmode = nextSubmode;
+      if (mode === 'face') transformControls.detach();
+      updateFaceHighlight();
+      updateVertexMarkerVisibility();
+      updateVertexTransformProxy();
       render();
     },
     setFaceSelection(indices) {
       selectedFaceIndices = Array.isArray(indices) ? [...indices] : [];
       updateFaceHighlight();
+    },
+    setVertexSelection(indices) {
+      selectedVertexIndices = Array.isArray(indices) ? [...indices] : [];
+      updateVertexMarkerColors();
+      updateVertexTransformProxy();
+      render();
     },
     setBoneTool(nextTool) {
       if (!['translate', 'rotate'].includes(nextTool)) return;

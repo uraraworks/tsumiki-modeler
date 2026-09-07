@@ -1,4 +1,4 @@
-import { PALETTE_CHARS, cloneDoc, convertBoxToMesh, createBlankTexture, createBone, createPart, extrudeMeshFace, resizePartTexture, validateDoc } from './model.js';
+import { PALETTE_CHARS, cloneDoc, convertBoxToMesh, createBlankTexture, createBone, createPart, extrudeMeshFace, moveMeshVertices, resizePartTexture, validateDoc } from './model.js';
 
 function withCommandDefaults(doc, cmd) {
   if (!cmd || typeof cmd !== 'object' || Array.isArray(cmd)) return cmd;
@@ -116,6 +116,15 @@ export function applyCommand(doc, cmd) {
         if (cmd.distance === 0) break; // 距離0はコマンドとして何もしない（CommandHistory側でも無変化として履歴に積まれない）。
         const { part: extruded } = extrudeMeshFace(part, cmd.faces, cmd.distance, next.texelsPerUnit);
         next.parts[index] = extruded;
+        break;
+      }
+      case 'moveVertices': {
+        if (part.type !== 'mesh') throw new Error(`「${part.name}」はメッシュではないため、頂点を移動できません。`);
+        if (!Array.isArray(cmd.vertexIndices) || !cmd.vertexIndices.length) throw new Error('移動する頂点を1つ以上指定してください。');
+        if (!Array.isArray(cmd.delta) || cmd.delta.length !== 3 || !cmd.delta.every(Number.isSafeInteger)) throw new Error('移動量は整数の[x,y,z]にしてください。');
+        if (cmd.delta.every(value => value === 0)) break; // 移動量0はコマンドとして何もしない（extrudeFaceのdistance=0と同じ作法）。
+        const { part: moved } = moveMeshVertices(part, cmd.vertexIndices, cmd.delta, next.texelsPerUnit);
+        next.parts[index] = moved;
         break;
       }
       case 'assignPartBone': part.bone = cmd.boneId; break;

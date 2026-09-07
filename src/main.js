@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createNewDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, extrudeMeshFace, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
+import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createNewDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, extrudeMeshFace, mirrorPart, moveMeshVertices, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 import { connectMcpBridge } from './bridge.js';
@@ -30,6 +30,8 @@ let playbackStartFrame = 0;
 let timelineDragging = false;
 let outlineMode = 'edge';
 let selectedFaces = [];
+let selectedVertices = [];
+let meshSubmode = 'vertex';
 const activeAnimation = () => doc.animations?.[0] ?? null;
 const status = (message, error = false) => {
   $('#status').textContent = message;
@@ -40,8 +42,10 @@ function refresh() {
   if (!doc.bones.some(bone => bone.id === selectedBoneId)) selectedBoneId = null;
   const selectedPartForFaces = doc.parts.find(p => p.id === selectedId);
   selectedFaces = selectedPartForFaces?.type === 'mesh' ? selectedFaces.filter(index => index < selectedPartForFaces.faces.length) : [];
+  selectedVertices = selectedPartForFaces?.type === 'mesh' ? selectedVertices.filter(index => index < selectedPartForFaces.vertices.length) : [];
   viewport?.rebuild(doc, selectedId, selectedBoneId);
   viewport?.setFaceSelection(selectedFaces);
+  viewport?.setVertexSelection(selectedVertices);
   updateFaceUi();
   $('#part-count').textContent = `${doc.parts.length} 個`;
   const paletteKey = JSON.stringify(doc.palette);
@@ -247,16 +251,23 @@ function previewPaintPixels(partId, pixels) {
     context.fillRect(x * scale, y * scale, scale, scale);
   }
 }
-function select(id) { selectedId = id; selectedFaces = []; refresh(); }
+function select(id) { selectedId = id; selectedFaces = []; selectedVertices = []; refresh(); }
 function updateFaceUi() {
   const faceTools = $('#face-tools');
   if (!faceTools) return;
   faceTools.hidden = transformMode !== 'face';
+  $('#mesh-submode-vertex').setAttribute('aria-pressed', String(meshSubmode === 'vertex'));
+  $('#mesh-submode-face').setAttribute('aria-pressed', String(meshSubmode === 'face'));
   const part = doc.parts.find(p => p.id === selectedId);
   const isMesh = part?.type === 'mesh';
+  $('#face-selection-count').hidden = meshSubmode !== 'face';
   $('#face-selection-count').textContent = isMesh ? `面 ${selectedFaces.length} 個選択` : 'メッシュパーツを選択してください';
-  $('#extrude-distance').disabled = !isMesh;
-  $('#extrude-apply').disabled = !isMesh || !selectedFaces.length;
+  $('#extrude-distance').hidden = meshSubmode !== 'face';
+  $('#extrude-apply').hidden = meshSubmode !== 'face';
+  $('#extrude-distance').disabled = !isMesh || meshSubmode !== 'face';
+  $('#extrude-apply').disabled = !isMesh || !selectedFaces.length || meshSubmode !== 'face';
+  $('#vertex-selection-count').hidden = meshSubmode !== 'vertex';
+  $('#vertex-selection-count').textContent = isMesh ? `頂点 ${selectedVertices.length} 個選択` : 'メッシュパーツを選択してください';
 }
 function selectFace(faceIndex, additive) {
   const part = doc.parts.find(p => p.id === selectedId);
@@ -276,6 +287,32 @@ function extrudeSelectedFaces() {
   const distance = Math.round(Number($('#extrude-distance').value));
   if (!Number.isFinite(distance) || distance === 0) { status('押し出す距離を0以外の整数で指定してください。', true); return; }
   execute({ type: 'extrudeFace', partId: part.id, faces: [...selectedFaces], distance }, part.id, '面を押し出しました。');
+}
+function selectVertex(vertexIndex, additive) {
+  const part = doc.parts.find(p => p.id === selectedId);
+  if (!part || part.type !== 'mesh') return;
+  if (vertexIndex === null) {
+    selectedVertices = [];
+  } else if (additive) {
+    selectedVertices = selectedVertices.includes(vertexIndex) ? selectedVertices.filter(index => index !== vertexIndex) : [...selectedVertices, vertexIndex];
+  } else {
+    selectedVertices = [vertexIndex];
+  }
+  viewport?.setVertexSelection(selectedVertices);
+  updateFaceUi();
+  status(selectedVertices.length ? `${part.name}：頂点 ${selectedVertices.length} 個を選択中。` : `${part.name}：頂点の選択を解除しました。`);
+}
+function commitMoveVertices(partId, vertexIndices, delta) {
+  if (!Array.isArray(delta) || delta.every(value => value === 0)) return;
+  execute({ type: 'moveVertices', partId, vertexIndices, delta }, partId, '頂点を移動しました。');
+}
+function setMeshSubmode(submode) {
+  if (!['vertex', 'face'].includes(submode)) return;
+  meshSubmode = submode;
+  viewport?.setMeshSubmode(submode);
+  updateFaceUi();
+  updateViewHelp();
+  status(submode === 'vertex' ? '頂点をクリックして選択し（Shiftで複数選択）、ギズモで1グリッド単位に移動します。' : '面をクリックして選択し、距離を指定して押し出します。');
 }
 function previewTransform(partId, transform) {
   if (partId !== selectedId) return;
@@ -306,9 +343,16 @@ function execute(command, nextSelection = selectedId, successMessage = null) {
       if (original?.type === 'mesh' && command.distance !== 0) {
         pixelsLost = extrudeMeshFace(original, command.faces, command.distance, doc.texelsPerUnit).pixelsLost;
       }
+    } else if (command.type === 'moveVertices') {
+      const original = doc.parts.find(part => part.id === command.partId);
+      if (original?.type === 'mesh' && Array.isArray(command.delta) && command.delta.some(value => value !== 0)) {
+        pixelsLost = moveMeshVertices(original, command.vertexIndices, command.delta, doc.texelsPerUnit).pixelsLost;
+      }
     }
     doc = history.execute(doc, command); selectedId = nextSelection; refresh();
-    const lostMessage = command.type === 'extrudeFace' ? '面の構成変更により、一部のテクスチャ内容が失われました。' : 'サイズ縮小により、転写範囲外のテクスチャ内容が消えました。';
+    const lostMessage = command.type === 'extrudeFace' ? '面の構成変更により、一部のテクスチャ内容が失われました。'
+      : command.type === 'moveVertices' ? '頂点移動で面のサイズが変わり、一部のテクスチャ内容が失われました。'
+        : 'サイズ縮小により、転写範囲外のテクスチャ内容が消えました。';
     status(pixelsLost ? lostMessage : (successMessage ?? '変更しました。JSON保存で作品を保存できます。'));
   }
   catch (error) { refresh(); status(error.message, true); }
@@ -347,6 +391,19 @@ function commitBoneTransform(boneId, transform) {
   const changed = Object.entries(transform).some(([key, value]) => value.some((item, index) => item !== bone[key][index]));
   if (changed) execute({ type: 'setBoneTransform', boneId, transform });
 }
+function updateViewHelp() {
+  $('#view-help').textContent = transformMode === 'paint'
+    ? '左ドラッグ：描く　／　右クリック：スポイト　／　右ドラッグ：回転　／　中ドラッグ：移動　／　ホイール：ズーム　／　Alt＋クリック：スポイト'
+    : transformMode === 'bone'
+      ? 'ボーンをクリックして選択　／　W：ボーン移動　／　E：ボーン回転（15度）　／　B：ボーン表示を終了'
+      : transformMode === 'animation'
+        ? 'ボーンを選択して回転　／　タイムラインをドラッグ：フレーム移動　／　Space：再生・停止　／　A：アニメ表示を終了'
+        : transformMode === 'face'
+          ? (meshSubmode === 'vertex'
+            ? '頂点をクリックして選択（Shift＋クリックで複数選択）　／　ギズモで1グリッド単位に移動　／　1：頂点　／　2：面　／　F：メッシュ編集を終了'
+            : '面をクリックして選択（Shift＋クリックで複数選択）　／　距離を指定して押し出す　／　1：頂点　／　2：面　／　F：メッシュ編集を終了')
+      : '左ドラッグ：回転　／　右ドラッグ：移動　／　ホイール：ズーム　／　W：移動　／　E：回転　／　R：リサイズ　／　P：ペイント　／　B：ボーン　／　F：メッシュ編集';
+}
 function setTransformMode(mode) {
   if (playing && mode !== 'animation') stopPlayback();
   transformMode = mode;
@@ -365,15 +422,7 @@ function setTransformMode(mode) {
   $('#bones-section').hidden = !['bone', 'animation'].includes(mode);
   $('#timeline').hidden = mode !== 'animation';
   updateFaceUi();
-  $('#view-help').textContent = mode === 'paint'
-    ? '左ドラッグ：描く　／　右クリック：スポイト　／　右ドラッグ：回転　／　中ドラッグ：移動　／　ホイール：ズーム　／　Alt＋クリック：スポイト'
-    : mode === 'bone'
-      ? 'ボーンをクリックして選択　／　W：ボーン移動　／　E：ボーン回転（15度）　／　B：ボーン表示を終了'
-      : mode === 'animation'
-        ? 'ボーンを選択して回転　／　タイムラインをドラッグ：フレーム移動　／　Space：再生・停止　／　A：アニメ表示を終了'
-        : mode === 'face'
-          ? '面をクリックして選択（Shift＋クリックで複数選択）　／　距離を指定して押し出す　／　F：面選択を終了'
-      : '左ドラッグ：回転　／　右ドラッグ：移動　／　ホイール：ズーム　／　W：移動　／　E：回転　／　R：リサイズ　／　P：ペイント　／　B：ボーン　／　F：面';
+  updateViewHelp();
   if (mode === 'resize') status('面をドラッグしてサイズを変えます。');
   else if (mode === 'paint') status('モデルを左ドラッグして1ドットずつ描きます。');
   else if (mode === 'bone') status('ボーンを選択して、移動または回転します。');
@@ -384,8 +433,10 @@ function setTransformMode(mode) {
     status('タイムラインでFKアニメーションを編集・再生します。');
   }
   else if (mode === 'face') {
+    viewport?.setMeshSubmode(meshSubmode);
     const part = doc.parts.find(p => p.id === selectedId);
-    status(part?.type === 'mesh' ? '面をクリックして選択し、距離を指定して押し出します。' : 'メッシュパーツを選択すると面を選べます。');
+    if (part?.type !== 'mesh') status('メッシュパーツを選択すると頂点・面を編集できます。');
+    else status(meshSubmode === 'vertex' ? '頂点をクリックして選択し、ギズモで移動します。' : '面をクリックして選択し、距離を指定して押し出します。');
   }
   else status(mode === 'translate' ? '移動ギズモでパーツを移動します。' : '回転ギズモでパーツを回転します。');
 }
@@ -397,6 +448,8 @@ $('#mode-bone').addEventListener('click', () => setTransformMode('bone'));
 $('#mode-animation').addEventListener('click', () => setTransformMode(transformMode === 'animation' ? 'translate' : 'animation'));
 $('#mode-face').addEventListener('click', () => setTransformMode(transformMode === 'face' ? 'translate' : 'face'));
 $('#extrude-apply').addEventListener('click', extrudeSelectedFaces);
+$('#mesh-submode-vertex').addEventListener('click', () => setMeshSubmode('vertex'));
+$('#mesh-submode-face').addEventListener('click', () => setMeshSubmode('face'));
 function updateOutlineSettings() {
   const depthThreshold = Number($('#outline-depth').value);
   const normalThreshold = Number($('#outline-normal').value);
@@ -514,6 +567,8 @@ document.addEventListener('keydown', event => {
   else if (event.key.toLowerCase() === 'p') setTransformMode('paint');
   else if (event.key.toLowerCase() === 'b') setTransformMode(transformMode === 'bone' ? 'translate' : 'bone');
   else if (event.key.toLowerCase() === 'f') setTransformMode(transformMode === 'face' ? 'translate' : 'face');
+  else if (transformMode === 'face' && event.key === '1') setMeshSubmode('vertex');
+  else if (transformMode === 'face' && event.key === '2') setMeshSubmode('face');
 });
 for (const [id, type] of [['#add-box', 'box'], ['#add-cylinder', 'cylinder']]) $(id).addEventListener('click', () => {
   if (!hasPartCapacity()) return;
@@ -651,8 +706,10 @@ try {
     onBoneTransformCommit: commitBoneTransform,
     onBoneTransformPreview: previewBoneTransform,
     onSelectFace: selectFace,
+    onSelectVertex: selectVertex,
+    onMoveVertices: commitMoveVertices,
   });
-  setTransformMode(transformMode); setBoneTool(boneTool); updateOutlineSettings(); refresh();
+  setTransformMode(transformMode); setBoneTool(boneTool); viewport?.setMeshSubmode(meshSubmode); updateOutlineSettings(); refresh();
   connectMcpBridge({
     get_model: () => cloneDoc(doc),
     apply_commands: args => applyBridgeCommands(args.commands),

@@ -82,6 +82,8 @@ const COMMAND_DESCRIPTION = `コマンド配列を順番に既存applyCommandへ
   箱(box)パーツを頂点・面を直接持つmesh型へ変換します。現在は箱からの変換のみ対応（他の形状を指定するとエラー）。変換後のパーツはsizeを持たず、vertices:[[x,y,z],...]（整数座標、外から見て反時計回りの面）とfaces:[[i,j,k,l]または[i,j,k],...]（vertices内インデックス）を持ちます。UVは面ごとに平面展開するため、変換直後（全面が軸に平行な矩形）は元の箱の6面展開と同じ見た目になります。mesh型はaddPartでは作成できず、このコマンドでのみ生成されます。
 - {type:"extrudeFace", partId:string, faces:number[], distance:number}
   meshパーツの指定した面（faces:part.faces内のインデックス配列、複数指定可、各面を個別にその法線方向へ押し出す）を、1グリッド単位でdistanceだけ法線方向へ押し出します。負のdistanceで内側へ凹ませられます。distance=0は何もしません（コマンドとして発行しても履歴に積まれません）。元の面は新しい位置の面に置き換わり、辺ごとに側面の四角形が追加されます（四角形1面につき頂点+4・面+4）。頂点は複製され、常に整数座標を保ちます。テクスチャは面の対応関係から可能な限り引き継ぎ、新しくできた側面・移動後の面のうち対応の無い部分は未指定（.）で埋まります。
+- {type:"moveVertices", partId:string, vertexIndices:number[], delta:[x,y,z]}
+  meshパーツの指定した頂点（vertexIndices:part.vertices内のインデックス配列、複数指定可）を全て同じ整数delta（1グリッド単位）だけ平行移動します。delta=[0,0,0]は何もしません（コマンドとして発行しても履歴に積まれません）。移動後も頂点座標は常に整数です。頂点を含む面の実寸（footprint）が変わった場合、その面のUVアトラス領域を作り直します。既存のテクスチャ内容は左上基準でできる範囲だけ引き継ぎ、はみ出す分は失われます（結果のpixelsLostで判定可）。移動によって面が面積0（頂点の重なりや一直線上の並び）に潰れる場合はコマンド全体がエラーになり適用されません。四角形の面が非平面になる（4頂点が同一平面上に無い）ほど頂点を動かすと、UVは最初の3頂点で決まる平面への近似展開になり歪みます。
 - {type:"addBone", bone:{id?,name?,parent?,position?,rotation?}}
   idは未指定時にb1,b2,...から空き番号を採番。name="ボーン N", parent=null, position=[0,0,0]（parent指定時は[0,2,0]）, rotation=[0,0,0]。
 - {type:"removeBone", boneId:string}

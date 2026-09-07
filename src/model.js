@@ -222,6 +222,10 @@ export function validateDoc(doc) {
       if (!Array.isArray(part.faces) || part.faces.length < 1 || part.faces.length > 2000) throw new Error('面は1〜2000個の配列にしてください。');
       const vertexCount = part.vertices.length;
       if (!part.faces.every(face => Array.isArray(face) && (face.length === 3 || face.length === 4) && face.every(index => Number.isSafeInteger(index) && index >= 0 && index < vertexCount))) throw new Error('面は3または4個の頂点インデックス（範囲内）の配列にしてください。');
+      // 頂点編集で頂点が重なる／一直線上に並ぶと面が面積0に潰れる。押し出しや箱変換では起こらないが、
+      // 頂点移動では起こりうるため、コマンド適用時（validateDocは常にapplyCommandの最後で走る）に検出して弾く。
+      const degenerateFaces = degenerateMeshFaceIndices(part);
+      if (degenerateFaces.length) throw new Error(`${part.name}の面（${degenerateFaces.join(', ')}）が面積0に潰れています。頂点の位置を見直してください。`);
     }
     if (!/^#[0-9a-f]{6}$/i.test(part.color)) throw new Error('色は#rrggbb形式にしてください。');
     if (part.texture !== undefined) {
@@ -383,6 +387,40 @@ export function extrudeMeshFace(part, faceIndices, distance, texelsPerUnit = DEF
   next.faces = faces;
   const faceIndexMap = new Map();
   for (let index = 0; index < originalFaceCount; index++) faceIndexMap.set(index, index);
+  const { rows, size, pixelsLost } = rebuildMeshTexture(part, next, texelsPerUnit, faceIndexMap);
+  if (part.texture) next.texture = { size, rows };
+  else delete next.texture;
+  return { part: next, pixelsLost };
+}
+// 面の面積（三角形は1枚、四角形は(0,1,2)+(0,2,3)の2枚の和）。頂点が重なる、または一直線上に
+// 並ぶと0になる。座標は常に整数のため、しきい値1e-9は「実質0」の判定として安全に使える。
+function faceArea(vertices) {
+  const triangles = vertices.length === 3 ? [[0, 1, 2]] : [[0, 1, 2], [0, 2, 3]];
+  return triangles.reduce((sum, [a, b, c]) => sum + Math.hypot(...cross3(sub3(vertices[b], vertices[a]), sub3(vertices[c], vertices[a]))) / 2, 0);
+}
+// 面積0（退化）に潰れた面のインデックスを返す。validateDocからの検査と、UI側の警告表示の両方から使う。
+export function degenerateMeshFaceIndices(part) {
+  if (part.type !== 'mesh') return [];
+  return part.faces.flatMap((face, index) => faceArea(face.map(vertexIndex => part.vertices[vertexIndex])) < 1e-9 ? [index] : []);
+}
+// 選択した頂点群を同じ量だけ移動する（頂点編集の唯一の変形操作）。頂点は常に整数座標のまま
+// （deltaも整数であることを要求する）。移動で面の実寸（footprint）が変わるため、UVアトラスは
+// rebuildMeshTexture で作り直す。面のインデックス自体は増減しないため、対応表は恒等写像でよい。
+export function moveMeshVertices(part, vertexIndices, delta, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  if (part.type !== 'mesh') throw new Error(`「${part.name}」はメッシュではないため、頂点を移動できません。`);
+  const uniqueIndices = [...new Set(vertexIndices)];
+  if (!uniqueIndices.length || !uniqueIndices.every(index => Number.isSafeInteger(index) && index >= 0 && index < part.vertices.length)) {
+    throw new Error('移動する頂点の指定が不正です。');
+  }
+  if (!Array.isArray(delta) || delta.length !== 3 || !delta.every(Number.isSafeInteger)) throw new Error('移動量は整数の[x,y,z]にしてください。');
+  if (delta.every(value => value === 0)) return { part: structuredClone(part), pixelsLost: false };
+  const vertices = structuredClone(part.vertices);
+  for (const index of uniqueIndices) {
+    vertices[index] = vertices[index].map((coordinate, axis) => Math.max(-10000, Math.min(10000, coordinate + delta[axis])));
+  }
+  const next = structuredClone(part);
+  next.vertices = vertices;
+  const faceIndexMap = new Map(part.faces.map((_, index) => [index, index]));
   const { rows, size, pixelsLost } = rebuildMeshTexture(part, next, texelsPerUnit, faceIndexMap);
   if (part.texture) next.texture = { size, rows };
   else delete next.texture;
