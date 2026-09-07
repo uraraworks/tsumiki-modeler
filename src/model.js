@@ -6,9 +6,27 @@ export const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
 const integer = (value, min = -10000, max = 10000) => Number.isSafeInteger(value) && value >= min && value <= max;
 export const partRadiusTop = part => part.radiusTop ?? part.radius;
 export const partRadiusBottom = part => part.radiusBottom ?? part.radius;
+// mesh型の実座標からバウンディングボックスを求める。半径のような「半径」概念が無いため、頂点の実min/maxをそのまま使う。
+export const meshBounds = vertices => ({
+  min: [0, 1, 2].map(axis => Math.min(...vertices.map(vertex => vertex[axis]))),
+  max: [0, 1, 2].map(axis => Math.max(...vertices.map(vertex => vertex[axis]))),
+});
 export function textureLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
   if (part.type === 'box') {
     const [w, h, d] = part.size.map(value => value * texelsPerUnit);
+    return {
+      size: [2 * (d + w), d + h],
+      faces: {
+        up: [d, 0, w, d], down: [d + w, 0, w, d],
+        right: [0, d, d, h], front: [d, d, w, h],
+        left: [d + w, d, d, h], back: [2 * d + w, d, w, h],
+      },
+    };
+  }
+  if (part.type === 'mesh') {
+    // 箱からの変換直後は、バウンディングボックスが元のsizeと一致するため箱と同じ展開になる。
+    const { min, max } = meshBounds(part.vertices);
+    const [w, h, d] = [0, 1, 2].map(axis => (max[axis] - min[axis]) * texelsPerUnit);
     return {
       size: [2 * (d + w), d + h],
       faces: {
@@ -132,17 +150,24 @@ export function validateDoc(doc) {
     if (!part || typeof part.id !== 'string' || !part.id || part.id.length > 100 || ids.has(part.id)) throw new Error('パーツIDが空か重複しています。');
     ids.add(part.id);
     if (part.bone !== null && !boneIds.has(part.bone)) throw new Error(`${part.name ?? part.id}の所属ボーンが見つかりません。`);
-    if (typeof part.name !== 'string' || !part.name.trim() || part.name.length > 100 || !['box', 'cylinder', 'sphere', 'capsule'].includes(part.type)) throw new Error('パーツの名前または種類が不正です。');
+    if (typeof part.name !== 'string' || !part.name.trim() || part.name.length > 100 || !['box', 'cylinder', 'sphere', 'capsule', 'mesh'].includes(part.type)) throw new Error('パーツの名前または種類が不正です。');
     for (const key of ['position', 'rotation']) {
       if (!Array.isArray(part[key]) || part[key].length !== 3 || !part[key].every(v => integer(v))) throw new Error('座標・回転は−10000〜10000の整数にしてください。');
     }
     if (part.type === 'box' && (!Array.isArray(part.size) || part.size.length !== 3 || !part.size.every(v => integer(v, 1)))) throw new Error('サイズは1〜10000の整数にしてください。');
-    if (part.type !== 'box' && (!integer(part.radius, 1) || !integer(part.segments, 3, 64))) throw new Error('半径は1〜10000、分割数は3〜64の整数にしてください。');
+    if (['cylinder', 'sphere', 'capsule'].includes(part.type) && (!integer(part.radius, 1) || !integer(part.segments, 3, 64))) throw new Error('半径は1〜10000、分割数は3〜64の整数にしてください。');
     if (['cylinder', 'capsule'].includes(part.type) && !integer(part.height, 1)) throw new Error('高さは1〜10000の整数にしてください。');
     if (part.type === 'cylinder') {
       if (part.radiusTop !== undefined && !integer(part.radiusTop, 0)) throw new Error('上半径は0〜10000の整数にしてください。');
       if (part.radiusBottom !== undefined && !integer(part.radiusBottom, 0)) throw new Error('下半径は0〜10000の整数にしてください。');
       if (partRadiusTop(part) === 0 && partRadiusBottom(part) === 0) throw new Error('上半径と下半径を同時に0にはできません。');
+    }
+    if (part.type === 'mesh') {
+      if (!Array.isArray(part.vertices) || part.vertices.length < 3 || part.vertices.length > 2000) throw new Error('頂点は3〜2000個の配列にしてください。');
+      if (!part.vertices.every(vertex => Array.isArray(vertex) && vertex.length === 3 && vertex.every(value => integer(value)))) throw new Error('頂点座標は−10000〜10000の整数にしてください。');
+      if (!Array.isArray(part.faces) || part.faces.length < 1 || part.faces.length > 2000) throw new Error('面は1〜2000個の配列にしてください。');
+      const vertexCount = part.vertices.length;
+      if (!part.faces.every(face => Array.isArray(face) && (face.length === 3 || face.length === 4) && face.every(index => Number.isSafeInteger(index) && index >= 0 && index < vertexCount))) throw new Error('面は3または4個の頂点インデックス（範囲内）の配列にしてください。');
     }
     if (!/^#[0-9a-f]{6}$/i.test(part.color)) throw new Error('色は#rrggbb形式にしてください。');
     if (part.texture !== undefined) {
@@ -155,16 +180,52 @@ export function validateDoc(doc) {
   }
   return doc;
 }
-export function createPart(doc, type) {
-  if (!['box', 'cylinder', 'frustum', 'sphere', 'capsule'].includes(type)) throw new Error('未対応のパーツです。');
+// パーツIDの採番だけを行う。createPartはこれに独自形状の初期値を足す一方、
+// duplicatePart/mirrorPartは既存パーツをそのまま複製するのでcreatePartを経由しない
+// （経由すると、未対応形状（mesh等）を複製しようとした際にcreatePartの型検査で落ちてしまう）。
+function nextPartId(doc) {
   let number = 1;
   while (doc.parts.some(p => p.id === `p${number}`)) number++;
+  return `p${number}`;
+}
+export function createPart(doc, type) {
+  if (!['box', 'cylinder', 'frustum', 'sphere', 'capsule'].includes(type)) throw new Error('未対応のパーツです。');
+  const id = nextPartId(doc);
+  const number = Number(id.slice(1));
   const labels = { box: '箱', cylinder: '円柱', frustum: '円錐台', sphere: '球', capsule: 'カプセル' };
   const storedType = type === 'frustum' ? 'cylinder' : type;
-  const part = { id: `p${number}`, name: `${labels[type]} ${number}`, type: storedType, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: type === 'sphere' ? 10 : 8, rotation: [0, 0, 0], color: '#e0a070', bone: null };
+  const part = { id, name: `${labels[type]} ${number}`, type: storedType, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: type === 'sphere' ? 10 : 8, rotation: [0, 0, 0], color: '#e0a070', bone: null };
   if (type === 'frustum') Object.assign(part, { radiusTop: 1, radiusBottom: 2 });
   part.texture = createBlankTexture(part, doc.texelsPerUnit ?? DEFAULT_TEXELS_PER_UNIT);
   return part;
+}
+// 箱→メッシュ変換。頂点8個・面6個（四角形）を生成する。
+// 面の頂点は必ず「外から見て反時計回り」（法線が外を向く）の順で並べること。
+// 奇数サイズでは中心を整数格子に厳密には合わせられないため、下側を切り捨てて上側へ寄せる
+// （頂点座標を整数にすることを優先し、中心が最大0.5ずれるのは許容する）。
+export function convertBoxToMesh(part) {
+  if (part.type !== 'box') throw new Error(`「${part.name}」は箱ではないため、メッシュへ変換できません（現在は箱からの変換のみ対応しています）。`);
+  const low = part.size.map(value => -Math.floor(value / 2));
+  const high = part.size.map((value, axis) => value + low[axis]);
+  const [lx, ly, lz] = low, [hx, hy, hz] = high;
+  const vertices = [
+    [lx, ly, lz], [hx, ly, lz], [hx, hy, lz], [lx, hy, lz], // 0-3: z = lz（背面側）
+    [lx, ly, hz], [hx, ly, hz], [hx, hy, hz], [lx, hy, hz], // 4-7: z = hz（正面側）
+  ];
+  const faces = [
+    [4, 5, 6, 7], // front (+Z)
+    [1, 0, 3, 2], // back (-Z)
+    [3, 7, 6, 2], // up (+Y)
+    [0, 1, 5, 4], // down (-Y)
+    [1, 2, 6, 5], // right (+X)
+    [0, 4, 7, 3], // left (-X)
+  ];
+  const next = structuredClone(part);
+  delete next.size;
+  next.type = 'mesh';
+  next.vertices = vertices;
+  next.faces = faces;
+  return next;
 }
 export function createBone(doc, parent = null) {
   let number = 1;
@@ -233,7 +294,7 @@ function mirroredName(name) {
   return { name: result, matched };
 }
 export function duplicatePart(doc, source) {
-  return { ...structuredClone(source), id: createPart(doc, source.type).id, name: uniquePartName(doc, source.name) };
+  return { ...structuredClone(source), id: nextPartId(doc), name: uniquePartName(doc, source.name) };
 }
 export function mirrorPart(doc, source) {
   const swapped = mirroredName(source.name);
@@ -242,6 +303,11 @@ export function mirrorPart(doc, source) {
   copy.position[0] = -copy.position[0];
   copy.rotation[1] = ((-copy.rotation[1] % 360) + 360) % 360;
   copy.rotation[2] = ((-copy.rotation[2] % 360) + 360) % 360;
+  if (copy.type === 'mesh') {
+    // X符号反転だけでは面が裏返る（法線が内側を向く）ため、頂点順序も反転して打ち消す。
+    copy.vertices = copy.vertices.map(([x, y, z]) => [-x, y, z]);
+    copy.faces = copy.faces.map(face => [...face].reverse());
+  }
   return copy;
 }
 export function createSampleDoc() {

@@ -78,6 +78,8 @@ const COMMAND_DESCRIPTION = `コマンド配列を順番に既存applyCommandへ
 - {type:"rename", partId:string, name:string}
 - {type:"assignPartBone", partId:string, boneId:string|null}
 - {type:"paintPixels", partId:string, pixels:[[x,y,"."またはパレット文字],...]}
+- {type:"convertToMesh", partId:string}
+  箱(box)パーツを頂点・面を直接持つmesh型へ変換します。現在は箱からの変換のみ対応（他の形状を指定するとエラー）。変換後のパーツはsizeを持たず、vertices:[[x,y,z],...]（整数座標、外から見て反時計回りの面）とfaces:[[i,j,k,l]または[i,j,k],...]（vertices内インデックス）を持ちます。UVは元の箱の6面展開をそのまま引き継ぐため見た目は変わりません。mesh型はaddPartでは作成できず、このコマンドでのみ生成されます。頂点・面自体の編集（押し出し等）は未対応です。
 - {type:"addBone", bone:{id?,name?,parent?,position?,rotation?}}
   idは未指定時にb1,b2,...から空き番号を採番。name="ボーン N", parent=null, position=[0,0,0]（parent指定時は[0,2,0]）, rotation=[0,0,0]。
 - {type:"removeBone", boneId:string}

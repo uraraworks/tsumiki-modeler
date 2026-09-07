@@ -8,7 +8,8 @@ const $ = selector => document.querySelector(selector);
 const partTypeLabel = part => part.type === 'box' ? '箱'
   : part.type === 'sphere' ? '球'
     : part.type === 'capsule' ? 'カプセル'
-      : (part.radiusTop !== undefined || part.radiusBottom !== undefined) ? '円錐台' : '円柱';
+      : part.type === 'mesh' ? 'メッシュ'
+        : (part.radiusTop !== undefined || part.radiusBottom !== undefined) ? '円錐台' : '円柱';
 let doc = createSampleDoc();
 // 選択は一時的なUI状態。モデルの編集状態はdocのみに置く。
 let selectedId = 'p2';
@@ -61,6 +62,7 @@ function refresh() {
   const part = doc.parts.find(p => p.id === selectedId);
   $('#delete').disabled = !part;
   $('#duplicate').disabled = !part; $('#mirror').disabled = !part;
+  $('#convert-to-mesh').disabled = !part || part.type !== 'box';
   $('#undo').disabled = !history.past.length; $('#redo').disabled = !history.future.length;
   $('#sample-new').setAttribute('aria-pressed', String(activeSample === 'new'));
   $('#sample-human').setAttribute('aria-pressed', String(activeSample === 'human'));
@@ -92,8 +94,12 @@ function refresh() {
   $('#part-bone').value = part.bone ?? '';
   $('#part-color').value = part.color; $('#color-value').textContent = part.color;
   const isFrustum = part.type === 'cylinder' && (part.radiusTop !== undefined || part.radiusBottom !== undefined);
-  const fieldVisibility = { box: part.type === 'box', cylinder: part.type === 'cylinder' && !isFrustum, frustum: isFrustum, sphere: part.type === 'sphere', capsule: part.type === 'capsule' };
+  const fieldVisibility = { box: part.type === 'box', cylinder: part.type === 'cylinder' && !isFrustum, frustum: isFrustum, sphere: part.type === 'sphere', capsule: part.type === 'capsule', mesh: part.type === 'mesh' };
   for (const [name, visible] of Object.entries(fieldVisibility)) { $(`#${name}-fields`).hidden = !visible; $(`#${name}-fields`).disabled = !visible; }
+  if (part.type === 'mesh') {
+    $('#mesh-vertex-count').textContent = `${part.vertices.length} 個`;
+    $('#mesh-face-count').textContent = `${part.faces.length} 個`;
+  }
   document.querySelectorAll('[data-vector]').forEach(input => {
     const value = part[input.dataset.vector];
     if (Array.isArray(value)) input.value = value[Number(input.dataset.axis)];
@@ -468,6 +474,11 @@ $('#add-primitive').addEventListener('click', () => {
 });
 $('#duplicate').addEventListener('click', () => duplicateSelected());
 $('#mirror').addEventListener('click', () => duplicateSelected(true));
+$('#convert-to-mesh').addEventListener('click', () => {
+  const part = doc.parts.find(p => p.id === selectedId);
+  if (!part) return;
+  execute({ type: 'convertToMesh', partId: part.id }, part.id, `${part.name} をメッシュに変換しました。`);
+});
 $('#delete').addEventListener('click', () => execute({ type: 'removePart', partId: selectedId }, null));
 $('#add-bone').addEventListener('click', () => {
   const bone = createBone(doc, selectedBoneId);

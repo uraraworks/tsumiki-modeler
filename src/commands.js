@@ -1,4 +1,4 @@
-import { PALETTE_CHARS, cloneDoc, createBlankTexture, createBone, createPart, resizePartTexture, validateDoc } from './model.js';
+import { PALETTE_CHARS, cloneDoc, convertBoxToMesh, createBlankTexture, createBone, createPart, resizePartTexture, validateDoc } from './model.js';
 
 function withCommandDefaults(doc, cmd) {
   if (!cmd || typeof cmd !== 'object' || Array.isArray(cmd)) return cmd;
@@ -108,6 +108,7 @@ export function applyCommand(doc, cmd) {
         break;
       case 'setColor': part.color = cmd.color; break;
       case 'rename': part.name = cmd.name; break;
+      case 'convertToMesh': next.parts[index] = convertBoxToMesh(part); break;
       case 'assignPartBone': part.bone = cmd.boneId; break;
       case 'paintPixels': {
         if (!Array.isArray(cmd.pixels)) throw new Error('ペイント内容が不正です。');
