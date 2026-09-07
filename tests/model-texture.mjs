@@ -1,25 +1,111 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { applyAnimationFrame, calculateBoneWorldTransforms, createBlankTexture, createBone, createChestSampleDoc, createNewDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, duplicatePart, interpolateRotation, mirrorPart, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { applyAnimationFrame, calculateBoneWorldTransforms, cloneDoc, createBlankTexture, createBone, createChestSampleDoc, createNewDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, duplicatePart, interpolateRotation, mirrorPart, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
 import { validateModelReport } from '../src/model-validation.js';
 import { calculatePartBounds, createPartGeometry, resizeDimensions, resizeHandleLayout, resizePreviewScale } from '../src/geometry.js';
 
 const doc = createSampleDoc();
 assert.doesNotThrow(() => validateDoc(doc));
-assert.deepEqual(doc.parts.map(part => part.name), ['頭', '胴', '左腕', '右腕', '左脚', '右脚']);
+assert.deepEqual(doc.parts.map(part => part.name), ['頭', '胴', '左肩', '左腕', '右肩', '右腕', '左股関節', '左脚', '右股関節', '右脚']);
 assert.deepEqual(doc.bones.map(bone => [bone.name, bone.parent]), [
   ['腰', null], ['胴', 'b1'], ['頭', 'b2'], ['左腕', 'b2'], ['右腕', 'b2'], ['左脚', 'b1'], ['右脚', 'b1'],
 ]);
 assert.deepEqual(doc.parts.map(part => [part.name, part.bone]), [
-  ['頭', 'b3'], ['胴', 'b2'], ['左腕', 'b4'], ['右腕', 'b5'], ['左脚', 'b6'], ['右脚', 'b7'],
+  ['頭', 'b3'], ['胴', 'b2'], ['左肩', 'b4'], ['左腕', 'b4'], ['右肩', 'b5'], ['右腕', 'b5'],
+  ['左股関節', 'b6'], ['左脚', 'b6'], ['右股関節', 'b7'], ['右脚', 'b7'],
 ]);
+// 肩・股関節の球：関節（肩・股関節ボーン）の位置に置かれ、その腕・脚側のボーンに割り当てられていること。
+for (const [sphereName, boneId] of [['左肩', 'b4'], ['右肩', 'b5'], ['左股関節', 'b6'], ['右股関節', 'b7']]) {
+  const sphere = doc.parts.find(part => part.name === sphereName);
+  const bone = doc.bones.find(candidate => candidate.id === boneId);
+  assert.equal(sphere.type, 'sphere', `${sphereName}は球にする`);
+  assert.equal(sphere.bone, boneId, `${sphereName}は${bone.name}ボーンに割り当てる`);
+  const boneWorldPosition = calculateBoneWorldTransforms(doc).get(boneId).position;
+  assert.deepEqual(sphere.position, boneWorldPosition, `${sphereName}はボーン（回転中心）の位置に置く`);
+}
 assert.equal(doc.animations.length, 1);
 assert.equal(doc.animations[0].name, 'walk');
 assert.doesNotThrow(() => validateDoc(doc), '人型の歩行アニメーションがModelDocとして有効');
 for (const part of doc.parts) assert.doesNotThrow(() => createPartTexturePixels(part, doc.palette));
 assert.equal(doc.texelsPerUnit, 4);
-assert.deepEqual(textureLayout(doc.parts[0], 4).size, [64, 32]);
+assert.deepEqual(textureLayout(doc.parts.find(part => part.name === '頭'), 4).size, [64, 32]);
+
+// --- 接合部の検算 -----------------------------------------------------------------
+// 静止姿勢で腕・脚の付け根が胴と数値上で重なっていること（隙間が無いこと）を確認する。
+const partByName = name => doc.parts.find(part => part.name === name);
+const boxBounds = part => ({
+  min: part.position.map((value, axis) => value - part.size[axis] / 2),
+  max: part.position.map((value, axis) => value + part.size[axis] / 2),
+});
+const boxesOverlap = (a, b) => [0, 1, 2].every(axis => a.min[axis] <= b.max[axis] && b.min[axis] <= a.max[axis]);
+const torsoBounds = boxBounds(partByName('胴'));
+for (const limbName of ['左腕', '右腕', '左脚', '右脚']) {
+  assert.ok(boxesOverlap(torsoBounds, boxBounds(partByName(limbName))), `${limbName}の付け根は静止時に胴と重なっている`);
+}
+
+// 「回転中心（ボーン位置）を含む向きに置かれたパーツは、そのボーン自身がどれだけ回転しても
+// 中心からパーツの内接球（最も薄い方向の半分の厚み）の半径だけは必ずその向きを覆い続ける」
+// という剛体回転の性質を使い、肩をZ軸に105度、脚（股関節）をX軸に60度回しても
+// 胴との接続が切れないことを角度に依存しない形で検算する。
+const closestPointOnBox = (point, bounds) => point.map((value, axis) => Math.min(Math.max(value, bounds.min[axis]), bounds.max[axis]));
+const distance3 = (a, b) => Math.hypot(...a.map((value, axis) => value - b[axis]));
+const inscribedRadius = size => Math.min(...size) / 2;
+for (const [limbName, boneId] of [['左腕', 'b4'], ['右腕', 'b5'], ['左脚', 'b6'], ['右脚', 'b7']]) {
+  const pivot = calculateBoneWorldTransforms(doc).get(boneId).position;
+  const gap = distance3(pivot, closestPointOnBox(pivot, torsoBounds));
+  assert.ok(gap <= inscribedRadius(partByName(limbName).size),
+    `${limbName}の回転中心(${pivot})から胴表面までの距離(${gap})が腕・脚の太さの半分以下＝どんな角度に回しても胴から離れない`);
+}
+// 胴（腰の位置を回転中心にしている）が前傾しても股関節との接続が切れないことも同様に検算する。
+const torsoPivot = calculateBoneWorldTransforms(doc).get('b2').position; // = 腰ボーンの位置
+const torsoPart = partByName('胴');
+const torsoHalfExtents = torsoPart.size.map(value => value / 2);
+const torsoPivotFaceDistances = torsoHalfExtents.map((half, axis) => half - Math.abs(torsoPivot[axis] - torsoPart.position[axis]));
+assert.ok(torsoPivotFaceDistances.every(value => value >= 0), '胴の回転中心（腰の位置）は胴の内部にある');
+const torsoInscribedRadius = Math.min(...torsoPivotFaceDistances);
+for (const hipName of ['左股関節', '左脚', '右股関節', '右脚']) {
+  const gap = distance3(torsoPivot, closestPointOnBox(torsoPivot, boxBounds(partByName(hipName))));
+  assert.ok(gap <= torsoInscribedRadius,
+    `胴の回転中心(腰の位置)から${hipName}までの距離(${gap})が胴の内接半径(${torsoInscribedRadius})以下＝胴を前傾しても腰・脚との接続が切れない`);
+}
+
+// 上の一般則に加え、実際に課題で指摘された角度（肩をZ軸に105度・胴と脚をX軸に60度）で
+// ボーンを回し、calculateBoneWorldTransforms（実装が使うのと同じFK計算）で腕・脚の付け根が
+// 実際に胴の表面から離れていないことも直接確かめる。
+function rotateVector(matrix, vector) {
+  return [0, 1, 2].map(row => matrix[row] * vector[0] + matrix[4 + row] * vector[1] + matrix[8 + row] * vector[2]);
+}
+function worldBoxCorners(posedDoc, restDoc, part) {
+  const bindPosition = part.bone ? calculateBoneWorldTransforms(restDoc).get(part.bone).position : [0, 0, 0];
+  const transform = part.bone ? calculateBoneWorldTransforms(posedDoc).get(part.bone) : { matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], position: [0, 0, 0] };
+  const localOffset = part.position.map((value, axis) => value - bindPosition[axis]);
+  const half = part.size.map(value => value / 2);
+  const corners = [];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+    const cornerLocal = [sx * half[0] + localOffset[0], sy * half[1] + localOffset[1], sz * half[2] + localOffset[2]];
+    const rotated = rotateVector(transform.matrix, cornerLocal);
+    corners.push(rotated.map((value, axis) => value + transform.position[axis]));
+  }
+  return corners;
+}
+const restDoc = cloneDoc(doc);
+const posedArmDoc = cloneDoc(doc);
+posedArmDoc.bones.find(bone => bone.id === 'b4').rotation = [0, 0, 105]; // 肩をZ軸に105度
+const rotatedArmCorners = worldBoxCorners(posedArmDoc, restDoc, partByName('左腕'));
+assert.ok(rotatedArmCorners.some(corner => distance3(corner, closestPointOnBox(corner, torsoBounds)) < 1e-6),
+  '肩をZ軸に105度回しても腕の付け根の角が胴の表面に触れ続けている');
+const posedTorsoDoc = cloneDoc(doc);
+posedTorsoDoc.bones.find(bone => bone.id === 'b2').rotation = [60, 0, 0]; // 胴をX軸に60度前傾
+const rotatedTorsoCorners = worldBoxCorners(posedTorsoDoc, restDoc, torsoPart);
+assert.ok(rotatedTorsoCorners.some(corner => distance3(corner, closestPointOnBox(corner, boxBounds(partByName('左脚')))) < 1e-6),
+  '胴をX軸に60度前傾させても胴の角が左脚（股関節側）の表面に触れ続けている');
+const posedLegDoc = cloneDoc(doc);
+posedLegDoc.bones.find(bone => bone.id === 'b6').rotation = [60, 0, 0]; // 左脚（股関節）をX軸に60度
+const rotatedLegCorners = worldBoxCorners(posedLegDoc, restDoc, partByName('左脚'));
+assert.ok(rotatedLegCorners.some(corner => distance3(corner, closestPointOnBox(corner, torsoBounds)) < 1e-6),
+  '股関節をX軸に60度回しても左脚の付け根の角が胴の表面に触れ続けている');
+// --------------------------------------------------------------------------------
 
 const newDoc = createNewDoc();
 assert.doesNotThrow(() => validateDoc(newDoc), '新規モデルがModelDocとして有効');

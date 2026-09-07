@@ -509,17 +509,28 @@ export function mirrorPart(doc, source) {
   }
   return copy;
 }
+// 人型サンプル。ボーンで大きく曲げても接合部が割れないよう、以下の2点を意識している。
+// 1. パーツ同士を隙間なく重ねる（腕・脚の付け根は胴の側面まで、胴の下端は股関節の位置まで差し込む）。
+// 2. 肩・股関節には、そのボーン自身の位置を中心にした球を置く。球は自分自身の回転中心を中心に
+//    置かれているため、そのボーンがどれだけ回転しても見た目（球の位置・形）が変わらず、
+//    回転で開く隙間を埋め続けられる（ローポリのゲームキャラでよく使われる手法）。
+// 検算はdocs/開発ログ.mdとtests/model-texture.mjsを参照。
 export function createSampleDoc() {
   const doc = {
     version: 1, name: 'untitled', grid: 1, texelsPerUnit: DEFAULT_TEXELS_PER_UNIT, palette: [...DEFAULT_PALETTE], parts: [],
     bones: [
       { id: 'b1', name: '腰', parent: null, position: [0, 4, 0], rotation: [0, 0, 0] },
-      { id: 'b2', name: '胴', parent: 'b1', position: [0, 3, 0], rotation: [0, 0, 0] },
-      { id: 'b3', name: '頭', parent: 'b2', position: [0, 5, 0], rotation: [0, 0, 0] },
-      { id: 'b4', name: '左腕', parent: 'b2', position: [-4, 0, 0], rotation: [0, 0, 0] },
-      { id: 'b5', name: '右腕', parent: 'b2', position: [4, 0, 0], rotation: [0, 0, 0] },
-      { id: 'b6', name: '左脚', parent: 'b1', position: [-2, -2, 0], rotation: [0, 0, 0] },
-      { id: 'b7', name: '右脚', parent: 'b1', position: [2, -2, 0], rotation: [0, 0, 0] },
+      // 胴は腰と同じワールド位置を回転中心にする（胴の下端を股関節の位置まで深く差し込んであるため、
+      // 胴が前傾しても回転中心付近は常に胴の内部に留まり、脚の付け根との接続が切れない）。
+      { id: 'b2', name: '胴', parent: 'b1', position: [0, 0, 0], rotation: [0, 0, 0] },
+      { id: 'b3', name: '頭', parent: 'b2', position: [0, 8, 0], rotation: [0, 0, 0] },
+      // 肩・股関節のボーン位置は、胴の側面（x=±2）にちょうど接する位置に置く。
+      // 腕・脚パーツの中心もこの位置に一致させてあるため、どれだけ回転しても
+      // パーツは常にこの位置を包み込み続け、胴の側面との接触が失われない。
+      { id: 'b4', name: '左腕', parent: 'b2', position: [-2, 3, 0], rotation: [0, 0, 0] },
+      { id: 'b5', name: '右腕', parent: 'b2', position: [2, 3, 0], rotation: [0, 0, 0] },
+      { id: 'b6', name: '左脚', parent: 'b1', position: [-2, -1, 0], rotation: [0, 0, 0] },
+      { id: 'b7', name: '右脚', parent: 'b1', position: [2, -1, 0], rotation: [0, 0, 0] },
     ],
     animations: [{
       id: 'a1', name: 'walk', fps: 12, length: 12,
@@ -532,16 +543,22 @@ export function createSampleDoc() {
     }],
   };
   const samples = [
-    ['頭', [0, 12, 0], [4, 4, 4], '#e0a070'],
-    ['胴', [0, 7, 0], [4, 6, 2], '#689caa'],
-    ['左腕', [-4, 7, 0], [2, 6, 2], '#e0a070'],
-    ['右腕', [4, 7, 0], [2, 6, 2], '#e0a070'],
-    ['左脚', [-2, 2, 0], [2, 4, 2], '#646f8c'],
-    ['右脚', [2, 2, 0], [2, 4, 2], '#646f8c'],
+    { name: '頭', type: 'box', position: [0, 12, 0], size: [4, 4, 4], color: '#e0a070', bone: 'b3' },
+    // 胴は幅4×奥行4×高さ10。下端(y=2)は股関節ボーン(y=4)より2下まで潜り込み、
+    // 側面(x=±2, z=±2)は肩・股関節ボーンにちょうど接する太さにしてある。
+    { name: '胴', type: 'box', position: [0, 7, 0], size: [4, 10, 4], color: '#689caa', bone: 'b2' },
+    { name: '左肩', type: 'sphere', position: [-2, 7, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b4' },
+    { name: '左腕', type: 'box', position: [-2, 7, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b4' },
+    { name: '右肩', type: 'sphere', position: [2, 7, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b5' },
+    { name: '右腕', type: 'box', position: [2, 7, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b5' },
+    { name: '左股関節', type: 'sphere', position: [-2, 3, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b6' },
+    { name: '左脚', type: 'box', position: [-2, 3, 0], size: [2, 4, 2], color: '#646f8c', bone: 'b6' },
+    { name: '右股関節', type: 'sphere', position: [2, 3, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b7' },
+    { name: '右脚', type: 'box', position: [2, 3, 0], size: [2, 4, 2], color: '#646f8c', bone: 'b7' },
   ];
-  const boneByPartName = { '頭': 'b3', '胴': 'b2', '左腕': 'b4', '右腕': 'b5', '左脚': 'b6', '右脚': 'b7' };
-  for (const [name, position, size, color] of samples) {
-    const part = { ...createPart(doc, 'box'), name, position, size, color, bone: boneByPartName[name] };
+  for (const sample of samples) {
+    const { name, type, ...properties } = sample;
+    const part = { ...createPart(doc, type), name, ...properties };
     part.texture = createBlankTexture(part, doc.texelsPerUnit);
     doc.parts.push(part);
   }
