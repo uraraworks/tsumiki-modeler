@@ -199,6 +199,32 @@ assert.ok(headToBodyRatio >= 4 && headToBodyRatio <= 5,
   `頭身(${headToBodyRatio})は4〜5頭身の範囲内`);
 // --------------------------------------------------------------------------------
 
+// --- 全パーツ総当たり交差検査 -------------------------------------------------------
+// これまでの検算は「胴との重なり」しか見ておらず、胴を介さないパーツ同士（腕と脚、左右の腕
+// 同士、頭と腕など）が立体として交差していても検出できなかった（実際に腕と脚がX・Y・Zの
+// 全軸で重なって交差していた不具合があった）。ここでは全パーツの組み合わせを総当たりで検査し、
+// 骨格上つながっている（接続関係にある）組み合わせだけを明示的に許容リストへ列挙する。
+// 許容リストに無い組み合わせは自動的に検査対象になるため、将来パーツを増やしても漏れない。
+const CONNECTED_PART_PAIRS = [
+  ['頭', '首'], ['首', '胴'],
+  ['胴', '左肩'], ['胴', '右肩'], ['左肩', '左腕'], ['右肩', '右腕'], ['胴', '左腕'], ['胴', '右腕'],
+  ['胴', '左股関節'], ['胴', '右股関節'], ['左股関節', '左脚'], ['右股関節', '右脚'], ['胴', '左脚'], ['胴', '右脚'],
+];
+const isConnectedPair = (nameA, nameB) => CONNECTED_PART_PAIRS.some(
+  ([x, y]) => (x === nameA && y === nameB) || (x === nameB && y === nameA),
+);
+for (let i = 0; i < doc.parts.length; i++) {
+  for (let j = i + 1; j < doc.parts.length; j++) {
+    const partA = doc.parts[i], partB = doc.parts[j];
+    if (isConnectedPair(partA.name, partB.name)) continue; // 接続関係：接する／1〜2グリッド程度の重なりを許容
+    const boundsA = boxBounds(partA), boundsB = boxBounds(partB);
+    const overlaps = [0, 1, 2].map(axis => axisOverlap(boundsA, boundsB, axis));
+    assert.ok(!overlaps.every(value => value > 0),
+      `${partA.name}と${partB.name}は接続関係にないため立体として交差してはいけない（重なり量: ${overlaps.join(', ')}）`);
+  }
+}
+// --------------------------------------------------------------------------------
+
 const newDoc = createNewDoc();
 assert.doesNotThrow(() => validateDoc(newDoc), '新規モデルがModelDocとして有効');
 assert.equal(newDoc.name, 'untitled');

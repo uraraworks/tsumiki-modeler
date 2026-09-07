@@ -840,14 +840,14 @@ export function createSampleDoc() {
       // これにより頭がどんな角度に回転しても、この回転中心に置いた首の球（後述）が
       // 見た目を変えずに首の隙間を埋め続けられる。
       { id: 'b3', name: '頭', parent: 'b2', position: [0, 4, 0], rotation: [0, 0, 0] },
-      // 肩ボーンは胴の側面（x=±2）かつ胴の上端寄りに置く。腕パーツの中心Xをこれと揃える
-      // ことで、腕は自動的にX方向へ1グリッドだけ胴へ重なり、それ以上は重ならない。
-      { id: 'b4', name: '左腕', parent: 'b2', position: [-2, 3, 0], rotation: [0, 0, 0] },
-      { id: 'b5', name: '右腕', parent: 'b2', position: [2, 3, 0], rotation: [0, 0, 0] },
-      // 股関節ボーンは胴の側面（x=±2）かつ胴の下端に置く。脚はここからY方向に1グリッドだけ
-      // 胴へ食い込ませ、それ以上は食い込ませない。
-      { id: 'b6', name: '左脚', parent: 'b1', position: [-2, -2, 0], rotation: [0, 0, 0] },
-      { id: 'b7', name: '右脚', parent: 'b1', position: [2, -2, 0], rotation: [0, 0, 0] },
+      // 肩ボーンは胴の側面（x=±2）かつ胴の上端（y=13）にちょうど置く。腕の上端をこの高さへ
+      // 合わせることで、腕が肩から生えているように見える（肩より上には出ない）。
+      { id: 'b4', name: '左腕', parent: 'b2', position: [-2, 4, 0], rotation: [0, 0, 0] },
+      { id: 'b5', name: '右腕', parent: 'b2', position: [2, 4, 0], rotation: [0, 0, 0] },
+      // 股関節ボーンは胴の真下（x=∓1、左右の脚の間）かつ胴の下端に置く。脚を胴の側面（x=±2）
+      // より内側に収めることで、腕（x=∓2..∓4）と脚が立体として交差しなくなる。
+      { id: 'b6', name: '左脚', parent: 'b1', position: [-1, -2, 0], rotation: [0, 0, 0] },
+      { id: 'b7', name: '右脚', parent: 'b1', position: [1, -2, 0], rotation: [0, 0, 0] },
     ],
     animations: [{
       id: 'a1', name: 'walk', fps: 12, length: 12,
@@ -865,30 +865,32 @@ export function createSampleDoc() {
     // 首：頭ボーンの回転中心（胴の上端、首の付け根）にちょうど置いた半径1の球。
     // 頭がどんな角度に回転しても回転中心の位置・形は変わらないため、胴の上端と頭の下端の
     // 間にできる隙間を角度によらず埋め続けられる（肩・股関節と同じ考え方）。
-    { name: '首', type: 'sphere', position: [0, 13, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b3' },
+    // sizeは半径どおり[2,2,2]を明示し（他形状同様、他パーツとの交差検算に使う近似バウンディング
+    // ボックスを実際の球に合わせる）、頭・肩など無関係なパーツとの見かけの交差誤検出を防ぐ。
+    { name: '首', type: 'sphere', position: [0, 13, 0], radius: 1, segments: 8, size: [2, 2, 2], color: '#e0a070', bone: 'b3' },
     // 胴は幅4×奥行4×高さ6（y=7..13）。頭とはY範囲が重ならない。腕はX方向に重ならず
-    // （隙間は肩の球で埋める）、脚の食い込みは1グリッドにとどめてある（詳細は各パーツの
-    // コメントを参照）。
+    // （隙間は肩の球で埋める）、脚は胴の真下（x=-2..2の内側）に収めてあるため腕とは
+    // 立体として交差しない（詳細は各パーツのコメントとtests/model-texture.mjsの総当たり
+    // 交差検査を参照）。
     { name: '胴', type: 'box', position: [0, 10, 0], size: [4, 6, 4], color: '#689caa', bone: 'b2' },
-    // 肩の球：肩ボーン（胴の側面・上端寄り、x=∓2）にちょうど置く。腕の中心Xとは1グリッド
+    // 肩の球：肩ボーン（胴の側面・上端、x=∓2, y=13）にちょうど置く。腕の中心Xとは1グリッド
     // ずれているため、球は胴・腕の両方に半径1グリッドずつまたがり、腕を胴から離したことで
     // できるX方向の隙間を埋める（検算はtests/model-texture.mjsとdocs/開発ログ.md参照）。
-    { name: '左肩', type: 'sphere', position: [-2, 12, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b4' },
-    // 腕：上端(y=11)は肩ボーン(y=12)より1下＝肩より上に出ない。肩ボーンとのY方向の隙間
-    // （1グリッド）は肩の球が埋める。中心Xは肩ボーン（x=∓2）より腕の半幅（1グリッド）だけ
-    // 外側（x=∓3）に置き、腕の内側の面をちょうど胴の側面（x=±2）に接するようにしてある
-    // （X方向の重なりは0。以前は中心Xを肩ボーンと同じ±2に揃えていたため、腕の全高にわたって
-    // 胴へ1グリッド重なり、半分めり込んで見えていた）。
-    { name: '左腕', type: 'box', position: [-3, 8, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b4' },
-    { name: '右肩', type: 'sphere', position: [2, 12, 0], radius: 1, segments: 8, color: '#e0a070', bone: 'b5' },
-    { name: '右腕', type: 'box', position: [3, 8, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b5' },
-    // 股関節の球：股関節ボーン（胴の側面・下端）にちょうど置く。
-    { name: '左股関節', type: 'sphere', position: [-2, 7, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b6' },
-    // 脚：上端(y=8)は股関節ボーン(y=7)より1上＝胴へのY方向の食い込みは1グリッドのみ。
-    // 下端(y=0)を地面に接地させ、長さは腕よりも長くしてある。
-    { name: '左脚', type: 'box', position: [-2, 4, 0], size: [2, 8, 2], color: '#646f8c', bone: 'b6' },
-    { name: '右股関節', type: 'sphere', position: [2, 7, 0], radius: 1, segments: 8, color: '#646f8c', bone: 'b7' },
-    { name: '右脚', type: 'box', position: [2, 4, 0], size: [2, 8, 2], color: '#646f8c', bone: 'b7' },
+    { name: '左肩', type: 'sphere', position: [-2, 13, 0], radius: 1, segments: 8, size: [2, 2, 2], color: '#e0a070', bone: 'b4' },
+    // 腕：上端(y=13)は肩ボーン(y=13)とちょうど同じ高さ＝肩から生えて見え、かつ肩より上に
+    // 出ない。中心Xは肩ボーン（x=∓2）より腕の半幅（1グリッド）だけ外側（x=∓3）に置き、
+    // 腕の内側の面をちょうど胴の側面（x=±2）に接するようにしてある（X方向の重なりは0）。
+    { name: '左腕', type: 'box', position: [-3, 10, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b4' },
+    { name: '右肩', type: 'sphere', position: [2, 13, 0], radius: 1, segments: 8, size: [2, 2, 2], color: '#e0a070', bone: 'b5' },
+    { name: '右腕', type: 'box', position: [3, 10, 0], size: [2, 6, 2], color: '#e0a070', bone: 'b5' },
+    // 股関節の球：股関節ボーン（胴の真下・下端、x=∓1, y=7）にちょうど置く。
+    { name: '左股関節', type: 'sphere', position: [-1, 7, 0], radius: 1, segments: 8, size: [2, 2, 2], color: '#646f8c', bone: 'b6' },
+    // 脚：胴の側面（x=±2）より内側（x=-2..0／0..2）に収め、左右の脚は中央(x=0)で接する
+    // だけで重ならない。上端(y=8)は股関節ボーン(y=7)より1上＝胴へのY方向の食い込みは
+    // 1グリッドのみ。下端(y=0)を地面に接地させ、長さは腕よりも長くしてある。
+    { name: '左脚', type: 'box', position: [-1, 4, 0], size: [2, 8, 2], color: '#646f8c', bone: 'b6' },
+    { name: '右股関節', type: 'sphere', position: [1, 7, 0], radius: 1, segments: 8, size: [2, 2, 2], color: '#646f8c', bone: 'b7' },
+    { name: '右脚', type: 'box', position: [1, 4, 0], size: [2, 8, 2], color: '#646f8c', bone: 'b7' },
   ];
   for (const sample of samples) {
     const { name, type, ...properties } = sample;
