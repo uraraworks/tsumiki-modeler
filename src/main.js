@@ -4,7 +4,12 @@ import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 import { connectMcpBridge } from './bridge.js';
 import { validateModelReport } from './model-validation.js';
+import { VERSION_FOOTER } from './version.js';
 const $ = selector => document.querySelector(selector);
+// どのビルドを見ているか識別するための版文字列(git commit時刻+ハッシュ由来。
+// 生成は tools/update-version.mjs、詳細は src/version.js / tools/version.mjs 参照)。
+const footerVersionEl = $('#app-footer-version');
+if (footerVersionEl) footerVersionEl.textContent = VERSION_FOOTER;
 const partTypeLabel = part => part.type === 'box' ? '箱'
   : part.type === 'sphere' ? '球'
     : part.type === 'capsule' ? 'カプセル'
