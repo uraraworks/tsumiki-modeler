@@ -251,7 +251,23 @@ function previewPaintPixels(partId, pixels) {
     context.fillRect(x * scale, y * scale, scale, scale);
   }
 }
-function select(id) { selectedId = id; selectedFaces = []; selectedVertices = []; refresh(); }
+function select(id) {
+  selectedId = id; selectedFaces = []; selectedVertices = [];
+  refresh();
+  if (transformMode === 'face') status(faceModeStatusMessage());
+}
+// メッシュ編集モードで、選択中パーツの状態に応じた案内文を返す（未変換パーツでは何も起きない問題への対策）。
+function faceModeStatusMessage() {
+  const part = doc.parts.find(p => p.id === selectedId);
+  if (!part) return 'メッシュパーツを選択すると頂点・面を編集できます。';
+  if (part.type === 'mesh') {
+    return meshSubmode === 'vertex'
+      ? `${part.name}：頂点をクリックして選択し（Shiftで複数選択）、ギズモで1グリッド単位に移動します。選択中のパーツの頂点のみ操作できます。`
+      : `${part.name}：面をクリックして選択し、距離を指定して押し出します。選択中のパーツの面のみ操作できます。`;
+  }
+  if (part.type === 'box') return `${part.name} は箱です。「メッシュに変換」を押すと頂点・面を編集できます。`;
+  return `${part.name} は${partTypeLabel(part)}です。この形状はまだメッシュに変換できません。`;
+}
 function updateFaceUi() {
   const faceTools = $('#face-tools');
   if (!faceTools) return;
@@ -261,13 +277,15 @@ function updateFaceUi() {
   const part = doc.parts.find(p => p.id === selectedId);
   const isMesh = part?.type === 'mesh';
   $('#face-selection-count').hidden = meshSubmode !== 'face';
-  $('#face-selection-count').textContent = isMesh ? `面 ${selectedFaces.length} 個選択` : 'メッシュパーツを選択してください';
+  $('#face-selection-count').textContent = isMesh ? `面 ${selectedFaces.length} 個選択（選択中のパーツのみ）` : 'メッシュパーツを選択してください';
   $('#extrude-distance').hidden = meshSubmode !== 'face';
   $('#extrude-apply').hidden = meshSubmode !== 'face';
   $('#extrude-distance').disabled = !isMesh || meshSubmode !== 'face';
   $('#extrude-apply').disabled = !isMesh || !selectedFaces.length || meshSubmode !== 'face';
   $('#vertex-selection-count').hidden = meshSubmode !== 'vertex';
-  $('#vertex-selection-count').textContent = isMesh ? `頂点 ${selectedVertices.length} 個選択` : 'メッシュパーツを選択してください';
+  $('#vertex-selection-count').textContent = isMesh ? `頂点 ${selectedVertices.length} 個選択（選択中のパーツのみ）` : 'メッシュパーツを選択してください';
+  // メッシュ編集モードで未変換（箱）のパーツを選んでいるときは「メッシュに変換」を目立たせる。
+  $('#convert-to-mesh').classList.toggle('attention', transformMode === 'face' && part?.type === 'box');
 }
 function selectFace(faceIndex, additive) {
   const part = doc.parts.find(p => p.id === selectedId);
@@ -312,7 +330,7 @@ function setMeshSubmode(submode) {
   viewport?.setMeshSubmode(submode);
   updateFaceUi();
   updateViewHelp();
-  status(submode === 'vertex' ? '頂点をクリックして選択し（Shiftで複数選択）、ギズモで1グリッド単位に移動します。' : '面をクリックして選択し、距離を指定して押し出します。');
+  status(faceModeStatusMessage());
 }
 function previewTransform(partId, transform) {
   if (partId !== selectedId) return;
@@ -434,11 +452,20 @@ function setTransformMode(mode) {
   }
   else if (mode === 'face') {
     viewport?.setMeshSubmode(meshSubmode);
-    const part = doc.parts.find(p => p.id === selectedId);
-    if (part?.type !== 'mesh') status('メッシュパーツを選択すると頂点・面を編集できます。');
-    else status(meshSubmode === 'vertex' ? '頂点をクリックして選択し、ギズモで移動します。' : '面をクリックして選択し、距離を指定して押し出します。');
+    status(faceModeStatusMessage());
   }
   else status(mode === 'translate' ? '移動ギズモでパーツを移動します。' : '回転ギズモでパーツを回転します。');
+}
+// メッシュ編集モードへ入る前に、選択中パーツが箱ならメッシュへ変換するか確認する。
+// 「いいえ」の場合はモードへ入らず、既存のモードのままにする（原因1の対策）。
+function requestFaceMode() {
+  if (transformMode === 'face') { setTransformMode('translate'); return; }
+  const part = doc.parts.find(p => p.id === selectedId);
+  if (part && part.type === 'box') {
+    if (!confirm(`${part.name} は箱です。メッシュに変換しますか？`)) return;
+    execute({ type: 'convertToMesh', partId: part.id }, part.id, `${part.name} をメッシュに変換しました。`);
+  }
+  setTransformMode('face');
 }
 $('#mode-translate').addEventListener('click', () => setTransformMode('translate'));
 $('#mode-rotate').addEventListener('click', () => setTransformMode('rotate'));
@@ -446,7 +473,7 @@ $('#mode-resize').addEventListener('click', () => setTransformMode('resize'));
 $('#mode-paint').addEventListener('click', () => setTransformMode('paint'));
 $('#mode-bone').addEventListener('click', () => setTransformMode('bone'));
 $('#mode-animation').addEventListener('click', () => setTransformMode(transformMode === 'animation' ? 'translate' : 'animation'));
-$('#mode-face').addEventListener('click', () => setTransformMode(transformMode === 'face' ? 'translate' : 'face'));
+$('#mode-face').addEventListener('click', requestFaceMode);
 $('#extrude-apply').addEventListener('click', extrudeSelectedFaces);
 $('#mesh-submode-vertex').addEventListener('click', () => setMeshSubmode('vertex'));
 $('#mesh-submode-face').addEventListener('click', () => setMeshSubmode('face'));
@@ -566,7 +593,7 @@ document.addEventListener('keydown', event => {
   else if (event.key.toLowerCase() === 'r') setTransformMode('resize');
   else if (event.key.toLowerCase() === 'p') setTransformMode('paint');
   else if (event.key.toLowerCase() === 'b') setTransformMode(transformMode === 'bone' ? 'translate' : 'bone');
-  else if (event.key.toLowerCase() === 'f') setTransformMode(transformMode === 'face' ? 'translate' : 'face');
+  else if (event.key.toLowerCase() === 'f') requestFaceMode();
   else if (transformMode === 'face' && event.key === '1') setMeshSubmode('vertex');
   else if (transformMode === 'face' && event.key === '2') setMeshSubmode('face');
 });
