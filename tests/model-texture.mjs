@@ -7,16 +7,16 @@ import { calculatePartBounds, createPartGeometry, resizeDimensions, resizeHandle
 
 const doc = createSampleDoc();
 assert.doesNotThrow(() => validateDoc(doc));
-assert.deepEqual(doc.parts.map(part => part.name), ['頭', '胴', '左肩', '左腕', '右肩', '右腕', '左股関節', '左脚', '右股関節', '右脚']);
+assert.deepEqual(doc.parts.map(part => part.name), ['頭', '首', '胴', '左肩', '左腕', '右肩', '右腕', '左股関節', '左脚', '右股関節', '右脚']);
 assert.deepEqual(doc.bones.map(bone => [bone.name, bone.parent]), [
   ['腰', null], ['胴', 'b1'], ['頭', 'b2'], ['左腕', 'b2'], ['右腕', 'b2'], ['左脚', 'b1'], ['右脚', 'b1'],
 ]);
 assert.deepEqual(doc.parts.map(part => [part.name, part.bone]), [
-  ['頭', 'b3'], ['胴', 'b2'], ['左肩', 'b4'], ['左腕', 'b4'], ['右肩', 'b5'], ['右腕', 'b5'],
+  ['頭', 'b3'], ['首', 'b3'], ['胴', 'b2'], ['左肩', 'b4'], ['左腕', 'b4'], ['右肩', 'b5'], ['右腕', 'b5'],
   ['左股関節', 'b6'], ['左脚', 'b6'], ['右股関節', 'b7'], ['右脚', 'b7'],
 ]);
 // 肩・股関節の球：関節（肩・股関節ボーン）の位置に置かれ、その腕・脚側のボーンに割り当てられていること。
-for (const [sphereName, boneId] of [['左肩', 'b4'], ['右肩', 'b5'], ['左股関節', 'b6'], ['右股関節', 'b7']]) {
+for (const [sphereName, boneId] of [['左肩', 'b4'], ['右肩', 'b5'], ['左股関節', 'b6'], ['右股関節', 'b7'], ['首', 'b3']]) {
   const sphere = doc.parts.find(part => part.name === sphereName);
   const bone = doc.bones.find(candidate => candidate.id === boneId);
   assert.equal(sphere.type, 'sphere', `${sphereName}は球にする`);
@@ -43,6 +43,12 @@ const torsoBounds = boxBounds(partByName('胴'));
 for (const limbName of ['左腕', '右腕', '左脚', '右脚']) {
   assert.ok(boxesOverlap(torsoBounds, boxBounds(partByName(limbName))), `${limbName}の付け根は静止時に胴と重なっている`);
 }
+
+// 頭と胴のY範囲は重ならない（胴が頭に突き抜けて顔が隠れることがない）ことを検算する。
+const headBounds = boxBounds(partByName('頭'));
+assert.ok(headBounds.min[1] >= torsoBounds.max[1],
+  `頭のY範囲下端(${headBounds.min[1]})が胴のY範囲上端(${torsoBounds.max[1]})以上＝頭と胴が重ならない`);
+assert.ok(!boxesOverlap(headBounds, torsoBounds), '頭と胴のバウンディングボックスは重ならない');
 
 // 「回転中心（ボーン位置）を含む向きに置かれたパーツは、そのボーン自身がどれだけ回転しても
 // 中心からパーツの内接球（最も薄い方向の半分の厚み）の半径だけは必ずその向きを覆い続ける」
@@ -105,6 +111,31 @@ posedLegDoc.bones.find(bone => bone.id === 'b6').rotation = [60, 0, 0]; // 左�
 const rotatedLegCorners = worldBoxCorners(posedLegDoc, restDoc, partByName('左脚'));
 assert.ok(rotatedLegCorners.some(corner => distance3(corner, closestPointOnBox(corner, torsoBounds)) < 1e-6),
   '股関節をX軸に60度回しても左脚の付け根の角が胴の表面に触れ続けている');
+
+// 頭をX軸・Z軸に45度回転させても、首の球（頭ボーンの回転中心にちょうど置いてある）が
+// 隙間を埋め続けることを検算する。球は自身の回転中心（＝頭ボーンの位置）を中心にしているため
+// 見た目が変わらず、頭側の最近接点までの距離（内接半径）が球の半径以下であれば、
+// どんな角度でも頭と球が接触し続ける。
+const neckSpherePart = partByName('首');
+const neckPivot = calculateBoneWorldTransforms(doc).get('b3').position; // 頭ボーンの回転中心
+assert.deepEqual(neckSpherePart.position, neckPivot, '首の球は頭ボーンの回転中心に置く');
+const headPart = partByName('頭');
+const headHalfExtents = headPart.size.map(value => value / 2);
+const headLocalOffset = headPart.position.map((value, axis) => value - neckPivot[axis]);
+const nearestLocalPoint = headLocalOffset.map((value, axis) => {
+  const half = headHalfExtents[axis];
+  return Math.abs(value) <= half ? 0 : value - Math.sign(value) * half;
+});
+const headInscribedRadiusFromNeck = distance3([0, 0, 0], nearestLocalPoint);
+assert.ok(headInscribedRadiusFromNeck <= neckSpherePart.radius,
+  `頭ボーンの回転中心から頭の最近接点までの距離(${headInscribedRadiusFromNeck})が首の球の半径(${neckSpherePart.radius})以下＝頭をどんな角度に回しても首の球から離れない`);
+
+const posedHeadDoc = cloneDoc(doc);
+posedHeadDoc.bones.find(bone => bone.id === 'b3').rotation = [45, 0, 45]; // 頭をX軸・Z軸に45度
+const posedHeadTransform = calculateBoneWorldTransforms(posedHeadDoc).get('b3');
+const rotatedNearestPoint = rotateVector(posedHeadTransform.matrix, nearestLocalPoint).map((value, axis) => value + posedHeadTransform.position[axis]);
+assert.ok(distance3(rotatedNearestPoint, neckPivot) <= neckSpherePart.radius + 1e-9,
+  '頭をX軸45度・Z軸45度回転させても頭の最近接点が首の球の半径内にとどまる（隙間ができない）');
 // --------------------------------------------------------------------------------
 
 const newDoc = createNewDoc();
