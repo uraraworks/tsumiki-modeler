@@ -68,18 +68,19 @@ function withDefaults(value) {
   if (doc.texelsPerUnit === undefined) doc.texelsPerUnit = DEFAULT_TEXELS_PER_UNIT;
   if (doc.palette === undefined) doc.palette = [...DEFAULT_PALETTE];
   if (doc.bones === undefined) doc.bones = [];
+  if (doc.animations === undefined) doc.animations = [];
   if (Array.isArray(doc.parts)) for (const part of doc.parts) if (part?.bone === undefined) part.bone = null;
   return doc;
 }
 export function validateDoc(doc) {
-  if (!doc || doc.version !== 1 || typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100 || !integer(doc.grid, 1) || !integer(doc.texelsPerUnit, 1, 64) || !Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36 || !doc.palette.every(color => /^#[0-9a-f]{6}$/i.test(color)) || !Array.isArray(doc.parts) || doc.parts.length > 1000 || !Array.isArray(doc.bones) || doc.bones.length > 1000) throw new Error('対応していないModelDocです。version・名前・グリッド・テクスチャ設定・パーツ数を確認してください。');
+  if (!doc || doc.version !== 1 || typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100 || !integer(doc.grid, 1) || !integer(doc.texelsPerUnit, 1, 64) || !Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36 || !doc.palette.every(color => /^#[0-9a-f]{6}$/i.test(color)) || !Array.isArray(doc.parts) || doc.parts.length > 1000 || !Array.isArray(doc.bones) || doc.bones.length > 1000 || (doc.animations !== undefined && !Array.isArray(doc.animations))) throw new Error('対応していないModelDocです。version・名前・グリッド・テクスチャ設定・パーツ数を確認してください。');
   const boneIds = new Set();
   for (const bone of doc.bones) {
     if (!bone || typeof bone.id !== 'string' || !bone.id || bone.id.length > 100 || boneIds.has(bone.id)) throw new Error('ボーンIDが空か重複しています。');
     boneIds.add(bone.id);
     if (typeof bone.name !== 'string' || !bone.name.trim() || bone.name.length > 100 || (bone.parent !== null && typeof bone.parent !== 'string')) throw new Error('ボーンの名前または親が不正です。');
     if (!Array.isArray(bone.position) || bone.position.length !== 3 || !bone.position.every(value => integer(value))) throw new Error('ボーン位置は−10000〜10000の整数にしてください。');
-    if (!Array.isArray(bone.rotation) || bone.rotation.length !== 3 || !bone.rotation.every(value => integer(value, 0, 359))) throw new Error('ボーン回転は0〜359度の整数にしてください。');
+    if (!Array.isArray(bone.rotation) || bone.rotation.length !== 3 || !bone.rotation.every(value => Number.isFinite(value) && value >= 0 && value < 360)) throw new Error('ボーン回転は0〜359度にしてください。');
   }
   for (const bone of doc.bones) if (bone.parent !== null && !boneIds.has(bone.parent)) throw new Error(`${bone.name}の親ボーンが見つかりません。`);
   const visited = new Set(), visiting = new Set(), bonesById = new Map(doc.bones.map(bone => [bone.id, bone]));
@@ -91,6 +92,22 @@ export function validateDoc(doc) {
     visiting.delete(bone.id); visited.add(bone.id);
   };
   for (const bone of doc.bones) visit(bone);
+  const animationIds = new Set();
+  for (const animation of doc.animations ?? []) {
+    if (!animation || typeof animation.id !== 'string' || !animation.id || animation.id.length > 100 || animationIds.has(animation.id)) throw new Error('アニメーションIDが空か重複しています。');
+    animationIds.add(animation.id);
+    if (typeof animation.name !== 'string' || !animation.name.trim() || animation.name.length > 100 || !integer(animation.fps, 1, 240) || !integer(animation.length, 1, 10000) || !Array.isArray(animation.tracks)) throw new Error('アニメーションの名前・fps・長さ・トラックが不正です。');
+    const trackBoneIds = new Set();
+    for (const track of animation.tracks) {
+      if (!track || typeof track.boneId !== 'string' || !boneIds.has(track.boneId) || trackBoneIds.has(track.boneId) || !Array.isArray(track.keys)) throw new Error('アニメーションのボーントラックが不正です。');
+      trackBoneIds.add(track.boneId);
+      const frames = new Set();
+      for (const key of track.keys) {
+        if (!key || !integer(key.frame, 0, animation.length - 1) || frames.has(key.frame) || !Array.isArray(key.rotation) || key.rotation.length !== 3 || !key.rotation.every(value => Number.isFinite(value) && value >= 0 && value < 360)) throw new Error('キーフレームのフレーム番号または回転が不正です。');
+        frames.add(key.frame);
+      }
+    }
+  }
   const ids = new Set();
   for (const part of doc.parts) {
     if (!part || typeof part.id !== 'string' || !part.id || part.id.length > 100 || ids.has(part.id)) throw new Error('パーツIDが空か重複しています。');
@@ -200,6 +217,15 @@ export function createSampleDoc() {
       { id: 'b6', name: '左脚', parent: 'b1', position: [-2, -2, 0], rotation: [0, 0, 0] },
       { id: 'b7', name: '右脚', parent: 'b1', position: [2, -2, 0], rotation: [0, 0, 0] },
     ],
+    animations: [{
+      id: 'a1', name: 'walk', fps: 12, length: 12,
+      tracks: [
+        { boneId: 'b4', keys: [{ frame: 0, rotation: [25, 0, 0] }, { frame: 6, rotation: [335, 0, 0] }, { frame: 11, rotation: [25, 0, 0] }] },
+        { boneId: 'b5', keys: [{ frame: 0, rotation: [335, 0, 0] }, { frame: 6, rotation: [25, 0, 0] }, { frame: 11, rotation: [335, 0, 0] }] },
+        { boneId: 'b6', keys: [{ frame: 0, rotation: [335, 0, 0] }, { frame: 6, rotation: [25, 0, 0] }, { frame: 11, rotation: [335, 0, 0] }] },
+        { boneId: 'b7', keys: [{ frame: 0, rotation: [25, 0, 0] }, { frame: 6, rotation: [335, 0, 0] }, { frame: 11, rotation: [25, 0, 0] }] },
+      ],
+    }],
   };
   const samples = [
     ['頭', [0, 12, 0], [4, 4, 4], '#e0a070'],
@@ -225,7 +251,7 @@ export function createChestSampleDoc() {
     grid: 1,
     texelsPerUnit: DEFAULT_TEXELS_PER_UNIT,
     palette: [...DEFAULT_PALETTE, wood, lightWood, metal],
-    parts: [], bones: [],
+    parts: [], bones: [], animations: [],
   };
   const samples = [
     ['本体', [0, 3, 0], [10, 6, 6], wood],
@@ -247,7 +273,7 @@ export function createTeapotSampleDoc() {
     grid: 1,
     texelsPerUnit: DEFAULT_TEXELS_PER_UNIT,
     palette: [...DEFAULT_PALETTE],
-    parts: [], bones: [],
+    parts: [], bones: [], animations: [],
   };
   const samples = [
     { name: '本体', type: 'cylinder', position: [0, 4, 0], radius: 3, height: 6, segments: 10, color: porcelain },
@@ -270,3 +296,59 @@ export function createTeapotSampleDoc() {
 }
 export const serializeDoc = doc => JSON.stringify(validateDoc(doc), null, 2);
 export const deserializeDoc = text => validateDoc(withDefaults(JSON.parse(text)));
+
+const radians = degrees => degrees * Math.PI / 180;
+const degrees = value => {
+  const normalized = ((value * 180 / Math.PI % 360) + 360) % 360;
+  return normalized < 1e-10 || 360 - normalized < 1e-10 ? 0 : normalized;
+};
+// ブラウザでは Three.js の Quaternion / Euler を渡し、同じ XYZ 順で最短弧を補間する。
+export function interpolateRotation(keys, frame, three = null) {
+  if (!keys.length) return [0, 0, 0];
+  const sorted = [...keys].sort((left, right) => left.frame - right.frame);
+  if (frame <= sorted[0].frame) return [...sorted[0].rotation];
+  if (frame >= sorted.at(-1).frame) return [...sorted.at(-1).rotation];
+  const afterIndex = sorted.findIndex(key => key.frame >= frame);
+  const before = sorted[afterIndex - 1], after = sorted[afterIndex];
+  if (after.frame === frame) return [...after.rotation];
+  const alpha = (frame - before.frame) / (after.frame - before.frame);
+  if (three?.Quaternion && three?.Euler) {
+    const from = new three.Quaternion().setFromEuler(new three.Euler(...before.rotation.map(radians), 'XYZ'));
+    const to = new three.Quaternion().setFromEuler(new three.Euler(...after.rotation.map(radians), 'XYZ'));
+    from.slerp(to, alpha);
+    const result = new three.Euler().setFromQuaternion(from, 'XYZ');
+    return [result.x, result.y, result.z].map(degrees);
+  }
+  // Nodeテスト用の依存なし実装。Three.jsと同じXYZ Euler→Quaternion→slerp→Eulerを行う。
+  const quaternion = rotation => {
+    const [x, y, z] = rotation.map(value => radians(value) / 2);
+    const c1 = Math.cos(x), c2 = Math.cos(y), c3 = Math.cos(z), s1 = Math.sin(x), s2 = Math.sin(y), s3 = Math.sin(z);
+    return [s1 * c2 * c3 + c1 * s2 * s3, c1 * s2 * c3 - s1 * c2 * s3, c1 * c2 * s3 + s1 * s2 * c3, c1 * c2 * c3 - s1 * s2 * s3];
+  };
+  let left = quaternion(before.rotation), right = quaternion(after.rotation);
+  let dot = left.reduce((sum, value, index) => sum + value * right[index], 0);
+  if (dot < 0) { right = right.map(value => -value); dot = -dot; }
+  let blended;
+  if (dot > .9995) blended = left.map((value, index) => value + alpha * (right[index] - value));
+  else {
+    const theta = Math.acos(Math.min(1, dot)), denominator = Math.sin(theta);
+    const a = Math.sin((1 - alpha) * theta) / denominator, b = Math.sin(alpha * theta) / denominator;
+    blended = left.map((value, index) => a * value + b * right[index]);
+  }
+  const length = Math.hypot(...blended); const [x, y, z, w] = blended.map(value => value / length);
+  const matrix13 = 2 * (x * z + w * y);
+  const euler = Math.abs(matrix13) < .9999999
+    ? [Math.atan2(-2 * (y * z - w * x), 1 - 2 * (x * x + y * y)), Math.asin(matrix13), Math.atan2(-2 * (x * y - w * z), 1 - 2 * (y * y + z * z))]
+    : [Math.atan2(2 * (x * y + w * z), 1 - 2 * (x * x + z * z)), Math.asin(matrix13), 0];
+  return euler.map(degrees);
+}
+
+// フレーム移動専用。履歴を経由せず、表示姿勢だけを持つ新しいModelDocを返す。
+export function applyAnimationFrame(doc, animationId, frame, three = null) {
+  const next = cloneDoc(doc), animation = next.animations?.find(candidate => candidate.id === animationId);
+  if (!animation) return next;
+  const clampedFrame = Math.max(0, Math.min(animation.length - 1, Math.trunc(frame)));
+  const tracks = new Map(animation.tracks.map(track => [track.boneId, track]));
+  for (const bone of next.bones) bone.rotation = interpolateRotation(tracks.get(bone.id)?.keys ?? [], clampedFrame, three);
+  return next;
+}

@@ -89,6 +89,26 @@ main {
 #canvas-host { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 canvas { display: block; image-rendering: pixelated; touch-action: none; }
 #canvas-host canvas.paint-mode { cursor: crosshair; }
+.workspace:has(.timeline:not([hidden])) { padding-top: 10px; padding-bottom: 10px; }
+.timeline { flex: 0 0 auto; height: 156px; margin-top: 8px; border: 1px solid #3b4650; background: #141a20; min-width: 0; }
+.timeline-controls { height: 41px; display: flex; align-items: center; gap: 6px; padding: 4px 7px; border-bottom: 1px solid #3b4650; overflow-x: auto; }
+.timeline-controls button { padding: 5px 8px; }
+.timeline-controls output { min-width: 52px; text-align: center; color: #f4c985; }
+.timeline-controls label { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.timeline-controls label + label { margin-left: 0; }
+.timeline-controls input { width: 58px; margin: 0; padding: 5px; }
+.timeline-scroll { height: 113px; overflow: auto; user-select: none; }
+.timeline-grid { width: max-content; min-width: 100%; }
+.timeline-row { display: grid; min-height: 26px; }
+.timeline-label { position: sticky; left: 0; z-index: 3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 7px; background: #202830; border-right: 1px solid #46515c; border-bottom: 1px solid #303a43; }
+.timeline-cell { position: relative; min-width: 24px; border-right: 1px solid #27313a; border-bottom: 1px solid #303a43; background: #161d23; cursor: ew-resize; }
+.timeline-cell:nth-child(5n + 2) { border-left: 1px solid #52606c; }
+.timeline-cell.current { background: rgba(240, 191, 120, .22); box-shadow: inset 2px 0 #f0bf78; }
+.timeline-cell.key::after { content: ''; position: absolute; width: 8px; height: 8px; left: 50%; top: 50%; background: #71d2e4; border: 1px solid #d5f8ff; transform: translate(-50%, -50%) rotate(45deg); }
+.timeline-ruler .timeline-cell { color: #8495a3; font-size: 9px; text-align: center; padding-top: 5px; }
+.timeline-ruler .timeline-label { color: #aab7c4; }
+.workspace:has(.timeline:not([hidden])) .view-help { padding: 7px 0; }
+.workspace:has(.timeline:not([hidden])) .toolbar { padding: 9px 0; }
 .view-help { text-align: center; font-size: 11px; color: #8492a0; padding: 13px 0; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px 0; border-top: 1px solid #343b43; }
 .toolbar-label { align-self: center; color: #aab7c4; font-size: 11px; }
@@ -171,6 +191,7 @@ footer.app-footer a { color: var(--page-footer-text); }
   main { flex: none; grid-template-columns: minmax(384px, 1fr); overflow: visible; }
   aside { overflow: visible; border-left: 0; border-top: 1px solid #343b43; }
   .workspace { padding: 16px; height: 560px; min-height: 0; }
+  .workspace:has(.timeline:not([hidden])) { height: 710px; }
   #viewport { min-height: 250px; }
   .app-badge { display: none; }
 }

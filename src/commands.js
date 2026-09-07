@@ -4,6 +4,36 @@ export function applyCommand(doc, cmd) {
   const next = cloneDoc(doc);
   if (cmd.type === 'addPart') next.parts.push(cloneDoc(cmd.part));
   else if (cmd.type === 'addBone') next.bones.push(cloneDoc(cmd.bone));
+  else if (cmd.type === 'addAnimation') {
+    if (!Array.isArray(next.animations)) next.animations = [];
+    next.animations.push(cloneDoc(cmd.animation));
+  }
+  else if (['setKeyframe', 'removeKeyframe', 'setClipSettings'].includes(cmd.type)) {
+    const animation = next.animations?.find(candidate => candidate.id === cmd.animationId);
+    if (!animation) throw new Error('対象のアニメーションが見つかりません。');
+    if (cmd.type === 'setClipSettings') {
+      if (cmd.fps !== undefined) animation.fps = cmd.fps;
+      if (cmd.length !== undefined) {
+        animation.length = cmd.length;
+        if (Number.isSafeInteger(cmd.length) && cmd.length > 0) {
+          for (const track of animation.tracks) track.keys = track.keys.filter(key => key.frame < cmd.length);
+        }
+      }
+    } else {
+      if (!next.bones.some(bone => bone.id === cmd.boneId)) throw new Error('対象のボーンが見つかりません。');
+      let track = animation.tracks.find(candidate => candidate.boneId === cmd.boneId);
+      if (cmd.type === 'setKeyframe') {
+        if (!track) { track = { boneId: cmd.boneId, keys: [] }; animation.tracks.push(track); }
+        const key = track.keys.find(candidate => candidate.frame === cmd.frame);
+        if (key) key.rotation = cloneDoc(cmd.rotation);
+        else track.keys.push({ frame: cmd.frame, rotation: cloneDoc(cmd.rotation) });
+        track.keys.sort((left, right) => left.frame - right.frame);
+      } else if (track) {
+        track.keys = track.keys.filter(key => key.frame !== cmd.frame);
+        if (!track.keys.length) animation.tracks = animation.tracks.filter(candidate => candidate !== track);
+      }
+    }
+  }
   else if (['removeBone', 'setBoneTransform', 'setBoneParent', 'renameBone'].includes(cmd.type)) {
     const index = next.bones.findIndex(bone => bone.id === cmd.boneId);
     if (index < 0) throw new Error('対象のボーンが見つかりません。');
@@ -17,6 +47,7 @@ export function applyCommand(doc, cmd) {
       }
       next.bones = next.bones.filter(candidate => !removed.has(candidate.id));
       for (const part of next.parts) if (removed.has(part.bone)) part.bone = null;
+      for (const animation of next.animations ?? []) animation.tracks = animation.tracks.filter(track => !removed.has(track.boneId));
     } else if (cmd.type === 'setBoneTransform') {
       for (const [key, value] of Object.entries(cmd.transform)) {
         if (!['position', 'rotation'].includes(key)) throw new Error('未対応のボーン変形プロパティです。');

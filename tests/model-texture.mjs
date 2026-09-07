@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { calculateBoneWorldTransforms, createBone, createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { applyAnimationFrame, calculateBoneWorldTransforms, createBone, createChestSampleDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, interpolateRotation, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
 
 const doc = createSampleDoc();
@@ -12,6 +12,9 @@ assert.deepEqual(doc.bones.map(bone => [bone.name, bone.parent]), [
 assert.deepEqual(doc.parts.map(part => [part.name, part.bone]), [
   ['頭', 'b3'], ['胴', 'b2'], ['左腕', 'b4'], ['右腕', 'b5'], ['左脚', 'b6'], ['右脚', 'b7'],
 ]);
+assert.equal(doc.animations.length, 1);
+assert.equal(doc.animations[0].name, 'walk');
+assert.doesNotThrow(() => validateDoc(doc), '人型の歩行アニメーションがModelDocとして有効');
 for (const part of doc.parts) assert.doesNotThrow(() => createPartTexturePixels(part, doc.palette));
 assert.equal(doc.texelsPerUnit, 4);
 assert.deepEqual(textureLayout(doc.parts[0], 4).size, [64, 32]);
@@ -133,6 +136,7 @@ assert.equal(legacy.texelsPerUnit, 4);
 assert.equal(legacy.palette.length, 8);
 assert.equal(legacy.parts[0].texture, undefined);
 assert.deepEqual(legacy.bones, []);
+assert.deepEqual(legacy.animations, []);
 assert.equal(legacy.parts[0].bone, null);
 assert.doesNotThrow(() => createPartTexturePixels(legacy.parts[0], legacy.palette));
 assert.equal(createPartTexturePixels(legacy.parts[0], legacy.palette), null);
@@ -190,7 +194,7 @@ cycleDoc.bones.find(bone => bone.id === 'b1').parent = 'b3';
 assert.throws(() => validateDoc(cycleDoc), /循環参照/);
 
 const fkDoc = {
-  ...structuredClone(doc), parts: [], bones: [
+  ...structuredClone(doc), parts: [], animations: [], bones: [
     { id: 'root', name: 'root', parent: null, position: [1, 2, 0], rotation: [0, 0, 90] },
     { id: 'child', name: 'child', parent: 'root', position: [2, 0, 0], rotation: [0, 0, 0] },
   ],
@@ -239,5 +243,46 @@ assert.deepEqual(renameHistory.undo(renamedBone), commandDoc, 'renameBoneをUndo
 const assignHistory = new CommandHistory();
 const unassigned = assignHistory.execute(commandDoc, { type: 'assignPartBone', partId: commandDoc.parts[0].id, boneId: null });
 assert.deepEqual(assignHistory.undo(unassigned), commandDoc, 'assignPartBoneをUndoできる');
+
+const interpolationKeys = [
+  { frame: 2, rotation: [0, 0, 0] },
+  { frame: 6, rotation: [0, 0, 80] },
+];
+assert.deepEqual(interpolateRotation(interpolationKeys, 0), [0, 0, 0], '最初のキーより前は最初の姿勢');
+assert.deepEqual(interpolateRotation(interpolationKeys, 8), [0, 0, 80], '最後のキー以降は最後の姿勢');
+assert.ok(Math.abs(interpolateRotation(interpolationKeys, 4)[2] - 40) < 1e-8, '中間フレームをslerpする');
+const shortest = interpolateRotation([
+  { frame: 0, rotation: [0, 0, 350] },
+  { frame: 10, rotation: [0, 0, 10] },
+], 5);
+assert.ok(shortest[2] < 1e-8 || 360 - shortest[2] < 1e-8, '350度から10度は20度の短い向きで補間する');
+const posed = applyAnimationFrame(doc, doc.animations[0].id, 0);
+assert.deepEqual(posed.bones.find(bone => bone.id === 'b4').rotation, [25, 0, 0]);
+assert.deepEqual(posed.bones.find(bone => bone.id === 'b1').rotation, [0, 0, 0], 'トラックがないボーンはバインドポーズ');
+assert.deepEqual(doc.bones.find(bone => bone.id === 'b4').rotation, [0, 0, 0], 'フレーム適用は入力docを書き換えない');
+
+const animationBase = createSampleDoc();
+const animationHistory = new CommandHistory();
+const keyed = animationHistory.execute(animationBase, { type: 'setKeyframe', animationId: 'a1', boneId: 'b3', frame: 4, rotation: [0, 15, 30] });
+assert.deepEqual(keyed.animations[0].tracks.find(track => track.boneId === 'b3').keys, [{ frame: 4, rotation: [0, 15, 30] }]);
+assert.deepEqual(animationHistory.undo(keyed), animationBase, 'setKeyframeをUndoできる');
+const removedKey = new CommandHistory();
+const withoutKey = removedKey.execute(keyed, { type: 'removeKeyframe', animationId: 'a1', boneId: 'b3', frame: 4 });
+assert.equal(withoutKey.animations[0].tracks.some(track => track.boneId === 'b3'), false);
+assert.deepEqual(removedKey.undo(withoutKey), keyed, 'removeKeyframeをUndoできる');
+const settingsHistory = new CommandHistory();
+const settingsChanged = settingsHistory.execute(keyed, { type: 'setClipSettings', animationId: 'a1', fps: 8, length: 4 });
+assert.deepEqual([settingsChanged.animations[0].fps, settingsChanged.animations[0].length], [8, 4]);
+assert.ok(settingsChanged.animations[0].tracks.every(track => track.keys.every(key => key.frame < 4)), '長さ短縮時は範囲外キーを除く');
+assert.deepEqual(settingsHistory.undo(settingsChanged), keyed, 'setClipSettingsをUndoできる');
+
+const invalidFrame = structuredClone(animationBase); invalidFrame.animations[0].tracks[0].keys[0].frame = -1;
+assert.throws(() => validateDoc(invalidFrame), /キーフレーム/);
+const duplicateFrame = structuredClone(animationBase); duplicateFrame.animations[0].tracks[0].keys.push(structuredClone(duplicateFrame.animations[0].tracks[0].keys[0]));
+assert.throws(() => validateDoc(duplicateFrame), /キーフレーム/);
+const missingBoneTrack = structuredClone(animationBase); missingBoneTrack.animations[0].tracks[0].boneId = 'missing';
+assert.throws(() => validateDoc(missingBoneTrack), /ボーントラック/);
+const invalidSettings = structuredClone(animationBase); invalidSettings.animations[0].fps = 0;
+assert.throws(() => validateDoc(invalidSettings), /アニメーション/);
 
 console.log('model texture tests: OK');

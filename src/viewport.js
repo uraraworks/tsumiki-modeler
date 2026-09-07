@@ -211,7 +211,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       mesh.add(outline); (part.bone ? boneObjects.get(part.bone) : scene).add(mesh); pickable.push(mesh);
       if (part.id === selectedId) { selectedMesh = mesh; selectedPart = part; }
     }
-    for (const visual of boneVisuals) visual.visible = mode === 'bone';
+    for (const visual of boneVisuals) visual.visible = ['bone', 'animation'].includes(mode);
     if (selectedPart) {
       partTransformProxy = new THREE.Object3D();
       partTransformProxy.position.fromArray(selectedPart.position);
@@ -220,8 +220,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       scene.add(partTransformProxy);
     }
     scene.add(transformHelper);
-    if (mode === 'bone' && selectedBoneObject) { transformControls.setMode(boneTool); transformControls.attach(selectedBoneObject); }
-    else if (partTransformProxy && !['resize', 'paint'].includes(mode)) transformControls.attach(partTransformProxy);
+    if (['bone', 'animation'].includes(mode) && selectedBoneObject) { transformControls.setMode(mode === 'animation' ? 'rotate' : boneTool); transformControls.attach(selectedBoneObject); }
+    else if (partTransformProxy && ['translate', 'rotate'].includes(mode)) transformControls.attach(partTransformProxy);
     else transformControls.detach();
     if (selectedMesh && mode === 'resize') createResizeHandles(selectedPart, selectedMesh);
     render();
@@ -495,7 +495,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const down = start; start = null;
     if (!down || down.id !== event.pointerId || down.dragged || Math.hypot(event.clientX - down.x, event.clientY - down.y) > clickDragThreshold) return;
     setRayFromEvent(event);
-    if (mode === 'bone') {
+    if (['bone', 'animation'].includes(mode)) {
       const hit = raycaster.intersectObjects(bonePickable, false)[0];
       if (hit) { onSelectBone(hit.object.userData.boneId); return; }
     }
@@ -535,7 +535,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   return {
     rebuild,
     setMode(nextMode) {
-      if (!['translate', 'rotate', 'resize', 'paint', 'bone'].includes(nextMode)) return;
+      if (!['translate', 'rotate', 'resize', 'paint', 'bone', 'animation'].includes(nextMode)) return;
       finishResizeDrag(null, false);
       finishPaintStroke(null, false);
       paintSampleStart = null;
@@ -544,14 +544,14 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         ? { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE }
         : { ...defaultMouseButtons };
       renderer.domElement.classList.toggle('paint-mode', nextMode === 'paint');
-      for (const visual of boneVisuals) visual.visible = nextMode === 'bone';
+      for (const visual of boneVisuals) visual.visible = ['bone', 'animation'].includes(nextMode);
       if (nextMode === 'resize') {
         transformControls.detach();
         if (selectedMesh && !handleGroup) createResizeHandles(selectedPart, selectedMesh);
       }
       else if (nextMode === 'paint') transformControls.detach();
-      else if (nextMode === 'bone') {
-        transformControls.setMode(boneTool);
+      else if (['bone', 'animation'].includes(nextMode)) {
+        transformControls.setMode(nextMode === 'animation' ? 'rotate' : boneTool);
         if (selectedBoneObject) transformControls.attach(selectedBoneObject); else transformControls.detach();
       }
       else {
@@ -573,6 +573,19 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     setPaintSettings(tool, character) {
       if (['pen', 'eraser', 'eyedropper'].includes(tool)) paintTool = tool;
       if (typeof character === 'string' && character.length === 1) paintCharacter = character;
+    },
+    updateBonePose(nextDoc) {
+      currentDoc = nextDoc;
+      for (const bone of nextDoc.bones) {
+        const object = boneObjects.get(bone.id);
+        if (object) object.rotation.set(...bone.rotation.map(THREE.MathUtils.degToRad));
+      }
+      render();
+    },
+    setEditingEnabled(enabled) {
+      if (!enabled) resetTransformDrag();
+      transformControls.enabled = enabled;
+      render();
     },
   };
 }

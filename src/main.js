@@ -1,4 +1,5 @@
-import { PALETTE_CHARS, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
+import * as THREE from 'three';
+import { PALETTE_CHARS, applyAnimationFrame, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, mirrorPart, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 const $ = selector => document.querySelector(selector);
@@ -14,6 +15,13 @@ let paintTool = 'pen';
 let paintColorIndex = 0;
 let renderedPalette = '';
 let activeSample = 'human';
+let currentFrame = 0;
+let playing = false;
+let playbackRequest = 0;
+let playbackStartTime = 0;
+let playbackStartFrame = 0;
+let timelineDragging = false;
+const activeAnimation = () => doc.animations?.[0] ?? null;
 const status = (message, error = false) => {
   $('#status').textContent = message;
   $('#status').classList.toggle('error', error);
@@ -53,7 +61,7 @@ function refresh() {
   $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part;
   $('#part-type').textContent = part ? (part.type === 'box' ? '箱' : '円柱') : '';
   $('#uv-preview-section').hidden = !part;
-  $('#bones-section').hidden = transformMode !== 'bone';
+  $('#bones-section').hidden = !['bone', 'animation'].includes(transformMode);
   $('#bone-count').textContent = `${doc.bones.length} 本`;
   renderBoneTree();
   const bone = doc.bones.find(candidate => candidate.id === selectedBoneId);
@@ -69,6 +77,7 @@ function refresh() {
     $('#bone-parent').value = bone.parent ?? '';
     document.querySelectorAll('[data-bone-vector]').forEach(input => { input.value = bone[input.dataset.boneVector][Number(input.dataset.axis)]; });
   }
+  renderTimeline();
   $('#part-bone').replaceChildren(new Option('なし', ''), ...doc.bones.map(candidate => new Option(candidate.name, candidate.id)));
   if (!part) return;
   $('#part-name').value = part.name;
@@ -97,6 +106,76 @@ function renderBoneTree() {
     return li;
   };
   $('#bone-tree').replaceChildren(...children(null).map(makeBranch));
+}
+function updateTimelineCurrent() {
+  $('#animation-frame').textContent = `${currentFrame} / ${Math.max(0, (activeAnimation()?.length ?? 1) - 1)}`;
+  document.querySelectorAll('.timeline-cell.current').forEach(cell => cell.classList.remove('current'));
+  document.querySelectorAll(`.timeline-cell[data-frame="${currentFrame}"]`).forEach(cell => cell.classList.add('current'));
+}
+function updatePlaybackUi() {
+  const button = $('#animation-play');
+  button.textContent = playing ? '■' : '▶';
+  button.setAttribute('aria-label', playing ? '停止' : '再生');
+  button.setAttribute('aria-pressed', String(playing));
+  $('#animation-set-key').disabled = playing || !selectedBoneId;
+  $('#animation-remove-key').disabled = playing || !selectedBoneId;
+}
+function renderTimeline() {
+  const animation = activeAnimation(), grid = $('#timeline-grid');
+  if (!animation) { grid.replaceChildren(); updatePlaybackUi(); return; }
+  currentFrame = Math.min(currentFrame, animation.length - 1);
+  $('#animation-length').value = animation.length;
+  $('#animation-fps').value = animation.fps;
+  const columns = `110px repeat(${animation.length}, 24px)`;
+  const makeCell = (frame, key = false, text = '') => {
+    const cell = document.createElement('div');
+    cell.className = `timeline-cell${key ? ' key' : ''}`; cell.dataset.frame = frame; cell.textContent = text;
+    return cell;
+  };
+  const ruler = document.createElement('div'); ruler.className = 'timeline-row timeline-ruler'; ruler.style.gridTemplateColumns = columns;
+  const rulerLabel = document.createElement('div'); rulerLabel.className = 'timeline-label'; rulerLabel.textContent = animation.name;
+  ruler.append(rulerLabel, ...Array.from({ length: animation.length }, (_, frame) => makeCell(frame, false, frame % 5 === 0 ? frame : '')));
+  const tracks = new Map(animation.tracks.map(track => [track.boneId, track]));
+  const rows = doc.bones.map(bone => {
+    const row = document.createElement('div'); row.className = 'timeline-row'; row.style.gridTemplateColumns = columns;
+    const label = document.createElement('button'); label.type = 'button'; label.className = 'timeline-label'; label.textContent = bone.name;
+    label.setAttribute('aria-pressed', String(bone.id === selectedBoneId));
+    label.addEventListener('click', () => { selectedBoneId = bone.id; refresh(); });
+    const keyedFrames = new Set((tracks.get(bone.id)?.keys ?? []).map(key => key.frame));
+    row.append(label, ...Array.from({ length: animation.length }, (_, frame) => makeCell(frame, keyedFrames.has(frame))));
+    return row;
+  });
+  grid.replaceChildren(ruler, ...rows);
+  updateTimelineCurrent(); updatePlaybackUi();
+}
+function setCurrentFrame(frame) {
+  const animation = activeAnimation();
+  if (!animation) return;
+  currentFrame = Math.max(0, Math.min(animation.length - 1, Math.trunc(frame)));
+  doc = applyAnimationFrame(doc, animation.id, currentFrame, THREE);
+  viewport?.updateBonePose(doc);
+  const bone = doc.bones.find(candidate => candidate.id === selectedBoneId);
+  if (bone) document.querySelectorAll('[data-bone-vector="rotation"]').forEach(input => { input.value = bone.rotation[Number(input.dataset.axis)]; });
+  updateTimelineCurrent();
+}
+function stopPlayback() {
+  if (playbackRequest) cancelAnimationFrame(playbackRequest);
+  playbackRequest = 0; playing = false;
+  viewport?.setEditingEnabled(true); updatePlaybackUi();
+}
+function startPlayback() {
+  const animation = activeAnimation();
+  if (!animation || playing) return;
+  playing = true; playbackStartTime = performance.now(); playbackStartFrame = currentFrame;
+  viewport?.setEditingEnabled(false); updatePlaybackUi();
+  const tick = timestamp => {
+    if (!playing) return;
+    const advanced = Math.floor((timestamp - playbackStartTime) * animation.fps / 1000);
+    const frame = (playbackStartFrame + advanced) % animation.length;
+    if (frame !== currentFrame) setCurrentFrame(frame);
+    playbackRequest = requestAnimationFrame(tick);
+  };
+  playbackRequest = requestAnimationFrame(tick);
 }
 function renderUvPreview(part) {
   const canvas = $('#uv-preview'), note = $('#uv-preview-note');
@@ -156,6 +235,7 @@ function previewBoneTransform(boneId, transform) {
 }
 function execute(command, nextSelection = selectedId, successMessage = null) {
   try {
+    if (playing) stopPlayback();
     let pixelsLost = false;
     if (command.type === 'setTransform') {
       const original = doc.parts.find(part => part.id === command.partId);
@@ -205,22 +285,37 @@ function commitBoneTransform(boneId, transform) {
   if (changed) execute({ type: 'setBoneTransform', boneId, transform });
 }
 function setTransformMode(mode) {
+  if (playing && mode !== 'animation') stopPlayback();
   transformMode = mode;
+  if (mode === 'animation' && !activeAnimation()) {
+    doc = history.execute(doc, { type: 'addAnimation', animation: { id: 'a1', name: 'animation', fps: 12, length: 12, tracks: [] } });
+    currentFrame = 0;
+  }
   viewport?.setMode(mode);
   $('#mode-translate').setAttribute('aria-pressed', String(mode === 'translate'));
   $('#mode-rotate').setAttribute('aria-pressed', String(mode === 'rotate'));
   $('#mode-resize').setAttribute('aria-pressed', String(mode === 'resize'));
   $('#mode-paint').setAttribute('aria-pressed', String(mode === 'paint'));
   $('#mode-bone').setAttribute('aria-pressed', String(mode === 'bone'));
-  $('#bones-section').hidden = mode !== 'bone';
+  $('#mode-animation').setAttribute('aria-pressed', String(mode === 'animation'));
+  $('#bones-section').hidden = !['bone', 'animation'].includes(mode);
+  $('#timeline').hidden = mode !== 'animation';
   $('#view-help').textContent = mode === 'paint'
     ? '左ドラッグ：描く　／　右クリック：スポイト　／　右ドラッグ：回転　／　中ドラッグ：移動　／　ホイール：ズーム　／　Alt＋クリック：スポイト'
     : mode === 'bone'
       ? 'ボーンをクリックして選択　／　W：ボーン移動　／　E：ボーン回転（15度）　／　B：ボーン表示を終了'
+      : mode === 'animation'
+        ? 'ボーンを選択して回転　／　タイムラインをドラッグ：フレーム移動　／　Space：再生・停止　／　A：アニメ表示を終了'
       : '左ドラッグ：回転　／　右ドラッグ：移動　／　ホイール：ズーム　／　W：移動　／　E：回転　／　R：リサイズ　／　P：ペイント　／　B：ボーン';
   if (mode === 'resize') status('面をドラッグしてサイズを変えます。');
   else if (mode === 'paint') status('モデルを左ドラッグして1ドットずつ描きます。');
   else if (mode === 'bone') status('ボーンを選択して、移動または回転します。');
+  else if (mode === 'animation') {
+    renderTimeline();
+    $('#undo').disabled = !history.past.length;
+    setCurrentFrame(currentFrame);
+    status('タイムラインでFKアニメーションを編集・再生します。');
+  }
   else status(mode === 'translate' ? '移動ギズモでパーツを移動します。' : '回転ギズモでパーツを回転します。');
 }
 $('#mode-translate').addEventListener('click', () => setTransformMode('translate'));
@@ -228,6 +323,48 @@ $('#mode-rotate').addEventListener('click', () => setTransformMode('rotate'));
 $('#mode-resize').addEventListener('click', () => setTransformMode('resize'));
 $('#mode-paint').addEventListener('click', () => setTransformMode('paint'));
 $('#mode-bone').addEventListener('click', () => setTransformMode('bone'));
+$('#mode-animation').addEventListener('click', () => setTransformMode(transformMode === 'animation' ? 'translate' : 'animation'));
+$('#animation-play').addEventListener('click', () => playing ? stopPlayback() : startPlayback());
+$('#animation-prev').addEventListener('click', () => { stopPlayback(); setCurrentFrame(currentFrame - 1); });
+$('#animation-next').addEventListener('click', () => { stopPlayback(); setCurrentFrame(currentFrame + 1); });
+$('#animation-set-key').addEventListener('click', () => {
+  const animation = activeAnimation(), bone = doc.bones.find(candidate => candidate.id === selectedBoneId);
+  if (!animation || !bone) return;
+  execute({ type: 'setKeyframe', animationId: animation.id, boneId: bone.id, frame: currentFrame, rotation: bone.rotation }, selectedId, `${bone.name} のフレーム ${currentFrame} にキーを打ちました。`);
+});
+$('#animation-remove-key').addEventListener('click', () => {
+  const animation = activeAnimation(), bone = doc.bones.find(candidate => candidate.id === selectedBoneId);
+  if (!animation || !bone) return;
+  execute({ type: 'removeKeyframe', animationId: animation.id, boneId: bone.id, frame: currentFrame }, selectedId, `${bone.name} のフレーム ${currentFrame} のキーを削除しました。`);
+  setCurrentFrame(currentFrame);
+});
+for (const [selector, property] of [['#animation-length', 'length'], ['#animation-fps', 'fps']]) $(selector).addEventListener('change', event => {
+  const input = event.target, animation = activeAnimation();
+  if (!animation) return;
+  if (!input.checkValidity()) { input.reportValidity(); refresh(); return; }
+  execute({ type: 'setClipSettings', animationId: animation.id, [property]: Number(input.value) });
+  currentFrame = Math.min(currentFrame, (activeAnimation()?.length ?? 1) - 1);
+  setCurrentFrame(currentFrame);
+});
+const timelineScroll = $('#timeline-scroll');
+timelineScroll.addEventListener('pointerdown', event => {
+  const cell = event.target.closest('.timeline-cell');
+  if (!cell || event.button !== 0) return;
+  stopPlayback(); timelineDragging = true; timelineScroll.setPointerCapture(event.pointerId);
+  setCurrentFrame(Number(cell.dataset.frame)); event.preventDefault();
+});
+timelineScroll.addEventListener('pointermove', event => {
+  if (!timelineDragging || !timelineScroll.hasPointerCapture(event.pointerId)) return;
+  const rect = $('#timeline-grid').getBoundingClientRect();
+  setCurrentFrame(Math.floor((event.clientX - rect.left - 110) / 24));
+});
+const finishTimelineDrag = event => {
+  if (!timelineDragging) return;
+  timelineDragging = false;
+  if (timelineScroll.hasPointerCapture(event.pointerId)) timelineScroll.releasePointerCapture(event.pointerId);
+};
+timelineScroll.addEventListener('pointerup', finishTimelineDrag);
+timelineScroll.addEventListener('pointercancel', finishTimelineDrag);
 function setBoneTool(tool) {
   boneTool = tool; viewport?.setBoneTool(tool);
   $('#bone-move').setAttribute('aria-pressed', String(tool === 'translate'));
@@ -278,8 +415,10 @@ document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
     event.preventDefault();
     duplicateSelected();
-  } else if (event.key.toLowerCase() === 'w') transformMode === 'bone' ? setBoneTool('translate') : setTransformMode('translate');
-  else if (event.key.toLowerCase() === 'e') transformMode === 'bone' ? setBoneTool('rotate') : setTransformMode('rotate');
+  } else if (event.code === 'Space' && transformMode === 'animation') { event.preventDefault(); playing ? stopPlayback() : startPlayback(); }
+  else if (event.key.toLowerCase() === 'a') setTransformMode(transformMode === 'animation' ? 'translate' : 'animation');
+  else if (event.key.toLowerCase() === 'w') transformMode === 'bone' ? setBoneTool('translate') : transformMode !== 'animation' && setTransformMode('translate');
+  else if (event.key.toLowerCase() === 'e') ['bone', 'animation'].includes(transformMode) ? setBoneTool('rotate') : setTransformMode('rotate');
   else if (event.key.toLowerCase() === 'r') setTransformMode('resize');
   else if (event.key.toLowerCase() === 'p') setTransformMode('paint');
   else if (event.key.toLowerCase() === 'b') setTransformMode(transformMode === 'bone' ? 'translate' : 'bone');
@@ -306,8 +445,8 @@ $('#remove-bone').addEventListener('click', () => {
   if (!confirm(message)) return;
   const parent = bone.parent; execute({ type: 'removeBone', boneId: bone.id }); selectedBoneId = parent; refresh();
 });
-$('#undo').addEventListener('click', () => { doc = history.undo(doc); refresh(); status('元に戻しました。'); });
-$('#redo').addEventListener('click', () => { doc = history.redo(doc); refresh(); status('やり直しました。'); });
+$('#undo').addEventListener('click', () => { stopPlayback(); doc = history.undo(doc); currentFrame = Math.min(currentFrame, (activeAnimation()?.length ?? 1) - 1); if (transformMode === 'animation' && activeAnimation()) doc = applyAnimationFrame(doc, activeAnimation().id, currentFrame, THREE); refresh(); status('元に戻しました。'); });
+$('#redo').addEventListener('click', () => { stopPlayback(); doc = history.redo(doc); currentFrame = Math.min(currentFrame, (activeAnimation()?.length ?? 1) - 1); if (transformMode === 'animation' && activeAnimation()) doc = applyAnimationFrame(doc, activeAnimation().id, currentFrame, THREE); refresh(); status('やり直しました。'); });
 function switchSample(sample) {
   if (!confirm('編集中の内容は失われます。よろしいですか？')) return;
   const samples = {
@@ -316,7 +455,7 @@ function switchSample(sample) {
     teapot: [createTeapotSampleDoc, 'ティーポット'],
   };
   const [createDoc, label] = samples[sample];
-  doc = createDoc();
+  stopPlayback(); doc = createDoc(); currentFrame = 0;
   activeSample = sample;
   history.reset();
   selectedId = doc.parts[0]?.id ?? null;
@@ -364,7 +503,7 @@ $('#file-input').addEventListener('change', async event => {
     if (file.size > 5 * 1024 * 1024) throw new Error('JSONは5MB以下にしてください。');
     const loaded = deserializeDoc(await file.text());
     // 読込は別ドキュメントへの切替。編集履歴を持ち越さない。
-    doc = loaded; activeSample = null; history.reset(); selectedId = doc.parts[0]?.id ?? null; selectedBoneId = null; refresh(); status(`${file.name}を読み込みました。`);
+    stopPlayback(); doc = loaded; currentFrame = 0; activeSample = null; history.reset(); selectedId = doc.parts[0]?.id ?? null; selectedBoneId = null; refresh(); status(`${file.name}を読み込みました。`);
   } catch (error) { status(`読込できませんでした：${error.message}`, true); }
   finally { event.target.value = ''; }
 });
