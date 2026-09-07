@@ -3,3 +3,6 @@ Thumbs.db
 *.log
 mcp/node_modules/
 mcp/dist/
+
+# 試作したモデルデータ（リポジトリには含めない）
+models/

@@ -17,10 +17,6 @@
 | ![人型サンプル](assets/sample-human.png) | ![宝箱サンプル](assets/sample-chest.png) | ![ティーポットサンプル](assets/sample-teapot.png) |
 | 人型サンプル | 宝箱サンプル | ティーポットサンプル（球と円錐台で構成） |
 
-![キャラクター作例 Mira](assets/sample-mira.png)
-
-キャラクター作例 Mira（`models/` にモデルデータあり）
-
 ## できること
 
 - **形状**: 箱・円柱・円錐台・球・カプセル・メッシュ
