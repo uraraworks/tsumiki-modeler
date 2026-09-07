@@ -70,10 +70,10 @@ server.tool('get_model', '現在のつみきモデラーのModelDocをJSONで取
   withBridge(async () => jsonText(await sendCommand('get_model'))));
 
 const COMMAND_DESCRIPTION = `コマンド配列を順番に既存applyCommandへ渡し、バッチ全体をUndo履歴1件として適用します。途中で失敗した場合は全体を適用しません。使用可能な形:
-- {type:"addPart", part:{name,type,position,size?,radius?,height?,segments?,rotation?,color?,bone?,texture?,id?}}
-  typeは"box"または"cylinder"。idは未指定時にp1,p2,...から空き番号を採番。size=[2,4,2], radius=2, height=4, segments=8, rotation=[0,0,0], bone=null。colorはパレット先頭色。textureは最終形状に合う空テクスチャ。boxではsize、cylinderではradius/heightを指定するのが推奨。
+- {type:"addPart", part:{name,type,position,size?,radius?,radiusTop?,radiusBottom?,height?,segments?,rotation?,color?,bone?,texture?,id?}}
+  typeは"box"、"cylinder"、"sphere"、"capsule"。idは未指定時にp1,p2,...から空き番号を採番。size=[2,4,2], radius=2, height=4, segments=8（sphereのみ新規作成時10）, rotation=[0,0,0], bone=null。colorはパレット先頭色。textureは最終形状に合う空テクスチャ。boxはsize、sphereはradius/segments、capsuleはradius/height/segmentsを使う。cylinderはradiusTop/radiusBottom未指定時にradiusを両方へ使い、個別指定で円錐台、radiusTop=0で円錐になる。
 - {type:"removePart", partId:string}
-- {type:"setTransform", partId:string, transform:{position?:[x,y,z],size?:[x,y,z],rotation?:[x,y,z],radius?:number,height?:number,segments?:number}}
+- {type:"setTransform", partId:string, transform:{position?:[x,y,z],size?:[x,y,z],rotation?:[x,y,z],radius?:number,radiusTop?:number,radiusBottom?:number,height?:number,segments?:number}}
 - {type:"setColor", partId:string, color:"#rrggbb"}
 - {type:"rename", partId:string, name:string}
 - {type:"assignPartBone", partId:string, boneId:string|null}

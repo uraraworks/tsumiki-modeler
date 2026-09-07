@@ -16,12 +16,15 @@ export function applyAtlasUV(geometry, part, texelsPerUnit) {
     values[index * 2] = uv[0]; values[index * 2 + 1] = uv[1];
   };
   for (let index = 0; index < position.count; index++) {
-    const [face, x, y] = atlasPixelForVertex(
+    const mapped = atlasPixelForVertex(
       part, layout,
       [position.getX(index), position.getY(index), position.getZ(index)],
       [normal.getX(index), normal.getY(index), normal.getZ(index)],
       [oldUv.getX(index), oldUv.getY(index)], texelsPerUnit,
     );
+    // 未対応形状や不完全なレイアウトは既定UVを維持し、呼び出し側でテクスチャ無しにする。
+    if (!mapped) return null;
+    const [face, x, y] = mapped;
     set(index, layout.faces[face], x, y);
   }
   geometry.setAttribute('uv', new THREE.BufferAttribute(values, 2));

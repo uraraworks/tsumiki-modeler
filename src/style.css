@@ -156,6 +156,8 @@ h2 span { font-size: 11px; color: #8fa0ae; font-weight: 400; }
 #bone-tree button[aria-pressed=true] { background: #243e45; border-color: #66d9ef; color: #bdf5ff; }
 label { display: block; color: #a9b6c2; font-size: 11px; }
 input, select { font: inherit; color: #e5eaf0; background: #13191f; border: 1px solid #424d58; border-radius: 4px; min-width: 0; width: 100%; padding: 8px; margin-top: 6px; }
+.add-primitive { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.add-primitive select { width: auto; margin: 0; padding: 8px 24px 8px 8px; }
 fieldset { border: 0; padding: 0; margin: 18px 0; }
 legend { font-size: 11px; color: #c0cbd4; margin-bottom: 5px; }
 .triple { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }

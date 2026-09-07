@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { applyAnimationFrame, calculateBoneWorldTransforms, createBlankTexture, createBone, createChestSampleDoc, createNewDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, interpolateRotation, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
+import { applyAnimationFrame, calculateBoneWorldTransforms, createBlankTexture, createBone, createChestSampleDoc, createNewDoc, createPart, createPartTexturePixels, createSampleDoc, createTeapotSampleDoc, deserializeDoc, duplicatePart, interpolateRotation, mirrorPart, resizePartTexture, serializeDoc, textureLayout, validateDoc } from '../src/model.js';
 import { atlasPixelForVertex } from '../src/uv-layout.js';
 import { validateModelReport } from '../src/model-validation.js';
+import { calculatePartBounds, createPartGeometry, resizeDimensions, resizeHandleLayout, resizePreviewScale } from '../src/geometry.js';
 
 const doc = createSampleDoc();
 assert.doesNotThrow(() => validateDoc(doc));
@@ -38,67 +39,18 @@ assert.ok(chest.parts.every(part => chest.palette.includes(part.color)));
 const teapot = createTeapotSampleDoc();
 assert.doesNotThrow(() => validateDoc(teapot));
 assert.deepEqual(teapot.parts.map(part => part.name), [
-  '本体', '蓋', 'つまみ', '注ぎ口（根元）', '注ぎ口（中間）', '注ぎ口（先端）', '取っ手（上）', '取っ手（外）', '取っ手（下）',
+  '本体', '台座', '蓋', 'つまみ', '注ぎ口', '取っ手（上）', '取っ手（外）', '取っ手（下）',
 ]);
-assert.ok(teapot.parts.every(part => ['box', 'cylinder'].includes(part.type)));
+assert.ok(teapot.parts.some(part => part.type === 'sphere'));
+assert.ok(teapot.parts.some(part => part.type === 'capsule'));
+assert.ok(teapot.parts.some(part => part.type === 'cylinder' && part.radiusTop !== part.radiusBottom));
 assert.ok(teapot.parts.every(part => part.rotation.every(angle => angle % 15 === 0)));
 assert.ok(teapot.parts.every(part => teapot.palette.includes(part.color)));
 assert.ok(teapot.parts.every(part => part.texture.rows.every(row => /^\.+$/.test(row))));
 const teapotPart = name => teapot.parts.find(part => part.name === name);
-const boxEndpoints = (part) => {
-  const angle = part.rotation[2] * Math.PI / 180;
-  const offset = [part.size[0] / 2 * Math.cos(angle), part.size[0] / 2 * Math.sin(angle)];
-  return [
-    [part.position[0] - offset[0], part.position[1] - offset[1]],
-    [part.position[0] + offset[0], part.position[1] + offset[1]],
-  ];
-};
-const distance2d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-const rootEnds = boxEndpoints(teapotPart('注ぎ口（根元）'));
-const middleEnds = boxEndpoints(teapotPart('注ぎ口（中間）'));
-const tipEnds = boxEndpoints(teapotPart('注ぎ口（先端）'));
-assert.deepEqual(['注ぎ口（根元）', '注ぎ口（中間）', '注ぎ口（先端）'].map(name => {
-  const part = teapotPart(name);
-  return [part.position, part.size, part.rotation];
-}), [
-  [[3, 4, 0], [2, 3, 3], [0, 0, 15]],
-  [[4, 5, 0], [2, 2, 2], [0, 0, 30]],
-  [[5, 6, 0], [2, 1, 1], [0, 0, 45]],
-]);
-assert.ok(3 - rootEnds[0][0] > .9 && 3 - rootEnds[0][0] < 1, '注ぎ口の根元が本体側面へ入る');
-assert.ok(distance2d(rootEnds[1], middleEnds[0]) < .9, '注ぎ口の根元と中間が接続する');
-assert.ok(distance2d(middleEnds[1], tipEnds[0]) < .7, '注ぎ口の中間と先端が接続する');
-assert.deepEqual(['取っ手（上）', '取っ手（外）', '取っ手（下）'].map(name => {
-  const part = teapotPart(name);
-  return [part.position, part.size, part.rotation];
-}), [
-  [[-4, 6, 0], [3, 1, 2], [0, 0, -30]],
-  [[-5, 4, 0], [1, 5, 2], [0, 0, 0]],
-  [[-4, 2, 0], [3, 1, 2], [0, 0, 30]],
-]);
-for (const name of ['取っ手（上）', '取っ手（下）']) {
-  const [, bodyEnd] = boxEndpoints(teapotPart(name));
-  assert.ok(bodyEnd[0] + 3 > .25 && bodyEnd[0] + 3 < .4, `${name}が本体側面へ浅く入る`);
-  assert.ok(bodyEnd[1] >= 1 && bodyEnd[1] <= 7, `${name}が本体の高さ内で接続する`);
-}
-const handleOuter = teapotPart('取っ手（外）');
-const upperOuterEnd = boxEndpoints(teapotPart('取っ手（上）'))[0];
-const lowerOuterEnd = boxEndpoints(teapotPart('取っ手（下）'))[0];
-assert.ok(Math.abs(upperOuterEnd[0] - handleOuter.position[0]) < handleOuter.size[0] / 2 && upperOuterEnd[1] - (handleOuter.position[1] + handleOuter.size[1] / 2) < .5, '取っ手上部と外側が接続する');
-assert.ok(Math.abs(lowerOuterEnd[0] - handleOuter.position[0]) < handleOuter.size[0] / 2 && (handleOuter.position[1] - handleOuter.size[1] / 2) - lowerOuterEnd[1] < .5, '取っ手下部と外側が接続する');
-const body = teapotPart('本体'), lid = teapotPart('蓋'), knob = teapotPart('つまみ');
-assert.equal(body.position[1] + body.height / 2 - (lid.position[1] - lid.height / 2), .5, '蓋が本体上面へ0.5重なる');
-assert.equal(lid.position[1] + lid.height / 2 - (knob.position[1] - knob.height / 2), .5, 'つまみが蓋上面へ0.5重なる');
-const partBounds = teapot.parts.map(part => {
-  if (part.type === 'cylinder') return [[part.position[0] - part.radius, part.position[1] - part.height / 2, part.position[2] - part.radius], [part.position[0] + part.radius, part.position[1] + part.height / 2, part.position[2] + part.radius]];
-  const angle = part.rotation[2] * Math.PI / 180;
-  const halfX = Math.abs(part.size[0] / 2 * Math.cos(angle)) + Math.abs(part.size[1] / 2 * Math.sin(angle));
-  const halfY = Math.abs(part.size[0] / 2 * Math.sin(angle)) + Math.abs(part.size[1] / 2 * Math.cos(angle));
-  return [[part.position[0] - halfX, part.position[1] - halfY, part.position[2] - part.size[2] / 2], [part.position[0] + halfX, part.position[1] + halfY, part.position[2] + part.size[2] / 2]];
-});
-const overallSize = [0, 1, 2].map(axis => Math.max(...partBounds.map(bounds => bounds[1][axis])) - Math.min(...partBounds.map(bounds => bounds[0][axis])));
-assert.ok(Math.max(...partBounds.slice(3, 6).map(bounds => bounds[1][0])) <= 7, '注ぎ口が本体中心からx=7以内に収まる');
-assert.ok(overallSize[0] <= 12 && overallSize[1] <= 14 && overallSize[2] <= 14, '全体が約12×14×14グリッド内に収まる');
+assert.deepEqual([teapotPart('本体').type, teapotPart('本体').radius], ['sphere', 4]);
+assert.deepEqual([teapotPart('注ぎ口').type, teapotPart('注ぎ口').radiusTop, teapotPart('注ぎ口').radiusBottom], ['cylinder', 1, 2]);
+assert.ok(['取っ手（上）', '取っ手（外）', '取っ手（下）'].every(name => teapotPart(name).type === 'capsule'));
 
 const box = { type: 'box', size: [4, 6, 2] };
 const boxLayout = textureLayout(box, 4);
@@ -136,6 +88,87 @@ assert.deepEqual(cylinderLayout.size, [51, 32]);
 assert.deepEqual(atlasPixelForVertex(cylinder, cylinderLayout, [0, 2, -2], [0, 1, 0], [.5, .5], 4), ['up', 8, 0]);
 assert.deepEqual(atlasPixelForVertex(cylinder, cylinderLayout, [0, -2, 2], [0, -1, 0], [.5, .5], 4), ['down', 8, 0]);
 assert.deepEqual(atlasPixelForVertex(cylinder, cylinderLayout, [2, 2, 0], [1, 0, 0], [0, 1], 4), ['side', 0, 0]);
+
+const frustum = createPart(doc, 'frustum');
+const sphere = createPart(doc, 'sphere');
+const capsule = createPart(doc, 'capsule');
+assert.deepEqual([frustum.type, frustum.radiusTop, frustum.radiusBottom], ['cylinder', 1, 2]);
+assert.deepEqual([sphere.type, sphere.radius, sphere.segments], ['sphere', 2, 10]);
+assert.deepEqual([capsule.type, capsule.radius, capsule.height], ['capsule', 2, 4]);
+for (const part of [frustum, sphere, capsule]) assert.doesNotThrow(() => validateDoc({ ...doc, parts: [part] }));
+const cone = { ...structuredClone(frustum), radiusTop: 0 };
+cone.texture = createBlankTexture(cone, doc.texelsPerUnit);
+assert.doesNotThrow(() => validateDoc({ ...doc, parts: [cone] }), 'radiusTop: 0を円錐として許可する');
+assert.throws(() => validateDoc({ ...doc, parts: [{ ...cone, radiusBottom: 0 }] }), /同時に0/);
+assert.deepEqual(textureLayout(sphere, 4).faces.surface, [0, 0, 51, 16]);
+assert.deepEqual(textureLayout(capsule, 4).faces.surface, [0, 0, 51, 32]);
+assert.deepEqual(atlasPixelForVertex(sphere, textureLayout(sphere, 4), [0, 2, 0], [0, 1, 0], [.25, .75], 4), ['surface', 12.75, 4]);
+
+// 各形状が実際に使う寸法フィールドだけを持つfixtureで、横断処理の回帰を防ぐ。
+const primitiveBase = { position: [0, 0, 0], rotation: [0, 0, 0], color: '#e0a070', bone: null };
+const primitives = [
+  { ...primitiveBase, id: 'shape-box', name: '箱', type: 'box', size: [4, 6, 2] },
+  { ...primitiveBase, id: 'shape-cylinder', name: '円柱', type: 'cylinder', radius: 2, height: 4, segments: 8 },
+  { ...primitiveBase, id: 'shape-frustum', name: '円錐台', type: 'cylinder', radius: 2, radiusTop: 1, radiusBottom: 3, height: 4, segments: 8 },
+  { ...primitiveBase, id: 'shape-sphere', name: '球', type: 'sphere', radius: 2, segments: 10 },
+  { ...primitiveBase, id: 'shape-capsule', name: 'カプセル', type: 'capsule', radius: 2, height: 4, segments: 8 },
+];
+for (const primitive of primitives) {
+  assert.doesNotThrow(() => { primitive.texture = createBlankTexture(primitive, doc.texelsPerUnit); }, `${primitive.name}: テクスチャ生成`);
+  const primitiveDoc = { ...newDoc, parts: [primitive] };
+  assert.doesNotThrow(() => validateDoc(primitiveDoc), `${primitive.name}: validateDoc`);
+  assert.doesNotThrow(() => createPartTexturePixels(primitive, doc.palette), `${primitive.name}: テクスチャピクセル生成`);
+  assert.doesNotThrow(() => resizeHandleLayout(primitive), `${primitive.name}: 面ハンドル計算`);
+  assert.doesNotThrow(() => resizePreviewScale(primitive), `${primitive.name}: 面ハンドルのプレビュー倍率計算`);
+  const layout = textureLayout(primitive, doc.texelsPerUnit);
+  const uvNormal = primitive.type === 'box' ? [1, 0, 0] : primitive.type === 'cylinder' ? [0, 0, 1] : [0, 1, 0];
+  assert.doesNotThrow(() => atlasPixelForVertex(primitive, layout, [0, 0, 0], uvNormal, [.5, .5], doc.texelsPerUnit), `${primitive.name}: UVレイアウト計算`);
+  assert.ok(atlasPixelForVertex(primitive, layout, [0, 0, 0], uvNormal, [.5, .5], doc.texelsPerUnit), `${primitive.name}: UV領域あり`);
+  assert.doesNotThrow(() => calculatePartBounds(primitive), `${primitive.name}: バウンディングボックス計算`);
+  const duplicated = duplicatePart(primitiveDoc, primitive);
+  const mirrored = mirrorPart({ ...primitiveDoc, parts: [primitive, duplicated] }, { ...primitive, position: [3, 0, 0] });
+  assert.doesNotThrow(() => validateDoc({ ...primitiveDoc, parts: [primitive, duplicated, mirrored] }), `${primitive.name}: 複製・左右ミラー`);
+  assert.equal(mirrored.position[0], -3);
+}
+assert.equal(atlasPixelForVertex(sphere, { size: [1, 1], faces: {} }, [0, 0, 0], [0, 1, 0], [.5, .5], 4), null, '未定義UV領域はテクスチャ無し扱い');
+assert.deepEqual(primitives.map(part => resizePreviewScale(part, resizeDimensions(part))), primitives.map(() => [1, 1, 1]));
+const resizeTransforms = [
+  { size: [6, 6, 2] }, { height: 6 }, { radiusTop: 2 }, { radius: 3 }, { height: 6 },
+];
+primitives.forEach((primitive, index) => assert.doesNotThrow(() => applyCommand(
+  { ...newDoc, parts: [primitive] },
+  { type: 'setTransform', partId: primitive.id, transform: resizeTransforms[index] },
+), `${primitive.name}: プロパティ編集とテクスチャリサイズ`));
+assert.deepEqual(primitives.map(calculatePartBounds), [
+  { min: [-2, -3, -1], max: [2, 3, 1] },
+  { min: [-2, -2, -2], max: [2, 2, 2] },
+  { min: [-3, -2, -3], max: [3, 2, 3] },
+  { min: [-2, -2, -2], max: [2, 2, 2] },
+  { min: [-2, -4, -2], max: [2, 4, 2] },
+]);
+assert.deepEqual(resizeHandleLayout(primitives[0]).map(handle => handle.position), [[-2, 0, 0], [2, 0, 0], [0, -3, 0], [0, 3, 0], [0, 0, -1], [0, 0, 1]]);
+assert.deepEqual(resizeHandleLayout(primitives[1]).map(handle => handle.position), [[-2, 0, 0], [2, 0, 0], [0, -2, 0], [0, 2, 0], [0, 0, -2], [0, 0, 2]]);
+assert.deepEqual(resizeHandleLayout(primitives[2]).map(handle => handle.position), [
+  [0, -2, 0], [0, 2, 0], [-1, 2, 0], [-3, -2, 0], [1, 2, 0], [3, -2, 0], [0, 2, -1], [0, -2, -3], [0, 2, 1], [0, -2, 3],
+]);
+assert.deepEqual(resizeHandleLayout(primitives[3]).map(handle => handle.position), [[-2, 0, 0], [2, 0, 0], [0, -2, 0], [0, 2, 0], [0, 0, -2], [0, 0, 2]]);
+assert.deepEqual(resizeHandleLayout(primitives[4]).map(handle => handle.position), [[-2, 0, 0], [2, 0, 0], [0, -4, 0], [0, 4, 0], [0, 0, -2], [0, 0, 2]]);
+
+const geometryCalls = [];
+const geometryStub = name => class { constructor(...args) { this.name = name; this.args = args; geometryCalls.push([name, args]); } };
+class Vector3Stub { constructor(...values) { this.values = values; } }
+class Box3Stub { constructor(min, max) { this.min = min; this.max = max; } }
+const fakeThree = {
+  BoxGeometry: geometryStub('box'), CylinderGeometry: geometryStub('cylinder'),
+  SphereGeometry: geometryStub('sphere'), CapsuleGeometry: geometryStub('capsule'),
+  Vector3: Vector3Stub, Box3: Box3Stub,
+};
+assert.deepEqual(createPartGeometry(cylinder, fakeThree).args, [2, 2, 4, 8, 1], '旧円柱はradiusを上下へ渡す');
+assert.deepEqual(createPartGeometry(cone, fakeThree).args, [0, 2, 4, 8, 1], '円錐台の上下半径を個別に渡す');
+const sphereGeometry = createPartGeometry(sphere, fakeThree);
+assert.deepEqual(sphereGeometry.args, [2, 10, 5]);
+assert.deepEqual([sphereGeometry.boundingBox.min.values, sphereGeometry.boundingBox.max.values], [[-2, -2, -2], [2, 2, 2]], 'render_preview用geometryに形状別boundsを設定する');
+assert.deepEqual(createPartGeometry(capsule, fakeThree).args, [2, 4, 8, 8]);
 
 const legacy = deserializeDoc(JSON.stringify({ version: 1, name: 'old', grid: 1, parts: [{ ...cylinder, texture: undefined }] }));
 assert.equal(legacy.texelsPerUnit, 4);

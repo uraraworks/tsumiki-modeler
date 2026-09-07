@@ -5,6 +5,10 @@ import { createViewport } from './viewport.js';
 import { connectMcpBridge } from './bridge.js';
 import { validateModelReport } from './model-validation.js';
 const $ = selector => document.querySelector(selector);
+const partTypeLabel = part => part.type === 'box' ? '箱'
+  : part.type === 'sphere' ? '球'
+    : part.type === 'capsule' ? 'カプセル'
+      : (part.radiusTop !== undefined || part.radiusBottom !== undefined) ? '円錐台' : '円柱';
 let doc = createSampleDoc();
 // 選択は一時的なUI状態。モデルの編集状態はdocのみに置く。
 let selectedId = 'p2';
@@ -51,7 +55,7 @@ function refresh() {
     button.type = 'button'; button.setAttribute('aria-pressed', String(part.id === selectedId));
     const swatch = document.createElement('span'); swatch.className = 'part-swatch'; swatch.style.backgroundColor = part.color;
     const name = document.createElement('span'); name.className = 'part-label'; name.textContent = part.name;
-    const kind = document.createElement('span'); kind.className = 'part-kind'; kind.textContent = part.type === 'box' ? '箱' : '円柱';
+    const kind = document.createElement('span'); kind.className = 'part-kind'; kind.textContent = partTypeLabel(part);
     button.append(swatch, name, kind); button.addEventListener('click', () => select(part.id)); li.append(button); return li;
   }));
   const part = doc.parts.find(p => p.id === selectedId);
@@ -63,7 +67,7 @@ function refresh() {
   $('#sample-chest').setAttribute('aria-pressed', String(activeSample === 'chest'));
   $('#sample-teapot').setAttribute('aria-pressed', String(activeSample === 'teapot'));
   $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part;
-  $('#part-type').textContent = part ? (part.type === 'box' ? '箱' : '円柱') : '';
+  $('#part-type').textContent = part ? partTypeLabel(part) : '';
   $('#uv-preview-section').hidden = !part;
   $('#bones-section').hidden = !['bone', 'animation'].includes(transformMode);
   $('#bone-count').textContent = `${doc.bones.length} 本`;
@@ -87,10 +91,18 @@ function refresh() {
   $('#part-name').value = part.name;
   $('#part-bone').value = part.bone ?? '';
   $('#part-color').value = part.color; $('#color-value').textContent = part.color;
-  $('#box-fields').hidden = part.type !== 'box'; $('#box-fields').disabled = part.type !== 'box';
-  $('#cylinder-fields').hidden = part.type !== 'cylinder'; $('#cylinder-fields').disabled = part.type !== 'cylinder';
-  document.querySelectorAll('[data-vector]').forEach(input => { input.value = part[input.dataset.vector][Number(input.dataset.axis)]; });
-  document.querySelectorAll('[data-scalar]').forEach(input => { input.value = part[input.dataset.scalar]; });
+  const isFrustum = part.type === 'cylinder' && (part.radiusTop !== undefined || part.radiusBottom !== undefined);
+  const fieldVisibility = { box: part.type === 'box', cylinder: part.type === 'cylinder' && !isFrustum, frustum: isFrustum, sphere: part.type === 'sphere', capsule: part.type === 'capsule' };
+  for (const [name, visible] of Object.entries(fieldVisibility)) { $(`#${name}-fields`).hidden = !visible; $(`#${name}-fields`).disabled = !visible; }
+  document.querySelectorAll('[data-vector]').forEach(input => {
+    const value = part[input.dataset.vector];
+    if (Array.isArray(value)) input.value = value[Number(input.dataset.axis)];
+  });
+  document.querySelectorAll('[data-scalar]').forEach(input => {
+    const key = input.dataset.scalar;
+    const value = part[key] ?? (['radiusTop', 'radiusBottom'].includes(key) ? part.radius : undefined);
+    if (value !== undefined) input.value = value;
+  });
   renderUvPreview(part);
 }
 function boneDescendants(boneId) {
@@ -189,7 +201,7 @@ function renderUvPreview(part) {
   if (width * scale > 8192 || height * scale > 8192 || width * height * scale * scale > 16000000) {
     canvas.hidden = true; note.textContent = `${width} × ${height}px（プレビューには大きすぎます）`; return;
   }
-  canvas.hidden = false; note.textContent = `${width} × ${height}px · ${doc.texelsPerUnit}px/グリッド`;
+  canvas.hidden = false; note.textContent = `${width} × ${height}px · ${doc.texelsPerUnit}px/グリッド${['sphere', 'capsule'].includes(part.type) ? ' · 極付近はUVが歪みます' : ''}`;
   canvas.width = width * scale; canvas.height = height * scale;
   const context = canvas.getContext('2d');
   context.fillStyle = part.color; context.fillRect(0, 0, canvas.width, canvas.height);
@@ -202,8 +214,9 @@ function renderUvPreview(part) {
   context.lineWidth = 1; context.strokeStyle = 'rgba(225,235,244,.75)';
   context.font = '10px system-ui, sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle';
   for (const [name, [x, y, faceWidth, faceHeight]] of Object.entries(layout.faces)) {
+    if (faceWidth <= 0 || faceHeight <= 0) continue;
     const left = x * scale, top = y * scale, drawnWidth = faceWidth * scale, drawnHeight = faceHeight * scale;
-    if (part.type === 'cylinder' && name !== 'side') {
+    if (part.type === 'cylinder' && name !== 'side' && faceWidth > 0 && faceHeight > 0) {
       context.beginPath(); context.ellipse(left + drawnWidth / 2, top + drawnHeight / 2, drawnWidth / 2 - .5, drawnHeight / 2 - .5, 0, 0, Math.PI * 2); context.stroke();
     } else context.strokeRect(left + .5, top + .5, drawnWidth - 1, drawnHeight - 1);
     const labelWidth = context.measureText(name).width + 5;
@@ -449,6 +462,10 @@ for (const [id, type] of [['#add-box', 'box'], ['#add-cylinder', 'cylinder']]) $
   if (!hasPartCapacity()) return;
   const part = createPart(doc, type); execute({ type: 'addPart', part }, part.id);
 });
+$('#add-primitive').addEventListener('click', () => {
+  if (!hasPartCapacity()) return;
+  const part = createPart(doc, $('#add-primitive-type').value); execute({ type: 'addPart', part }, part.id);
+});
 $('#duplicate').addEventListener('click', () => duplicateSelected());
 $('#mirror').addEventListener('click', () => duplicateSelected(true));
 $('#delete').addEventListener('click', () => execute({ type: 'removePart', partId: selectedId }, null));
@@ -499,7 +516,9 @@ $('#properties-form').addEventListener('change', event => {
   else if (input.id === 'part-color') execute({ type: 'setColor', partId: part.id, color: input.value });
   else if (input.id === 'part-bone') execute({ type: 'assignPartBone', partId: part.id, boneId: input.value || null });
   else if (input.dataset.vector) {
-    const key = input.dataset.vector, value = [...part[key]]; value[Number(input.dataset.axis)] = Number(input.value);
+    const key = input.dataset.vector;
+    if (!Array.isArray(part[key])) { refresh(); return; }
+    const value = [...part[key]]; value[Number(input.dataset.axis)] = Number(input.value);
     execute({ type: 'setTransform', partId: part.id, transform: { [key]: value } });
   } else if (input.dataset.scalar) execute({ type: 'setTransform', partId: part.id, transform: { [input.dataset.scalar]: Number(input.value) } });
 });

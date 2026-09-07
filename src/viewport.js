@@ -4,6 +4,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createToonMaterial, createOutlineMaterial, createEdgeCompositeMaterial } from './materials.js';
 import { createBlankTexture, textureLayout } from './model.js';
 import { applyAtlasUV, createPartCanvasTexture, textureSignature, updatePartCanvasTexturePixel } from './texture.js';
+import { createPartGeometry, resizeDimensions, resizeHandleLayout, resizePreviewScale } from './geometry.js';
 export function createViewport(container, host, onSelect, onTransformCommit, onTransformPreview, paintHandlers = {}) {
   const {
     onCommitPaint = () => {}, onHoverPaint = () => {}, onSamplePaint = () => {}, onPreviewPaint = () => {},
@@ -173,25 +174,22 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     mesh.getWorldQuaternion(handleGroup.quaternion);
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     const materials = axisColors.map(color => new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false }));
-    for (let axis = 0; axis < 3; axis++) for (const sign of [-1, 1]) {
-      const handle = new THREE.Mesh(geometry, materials[axis]);
+    for (const { position, ...spec } of resizeHandleLayout(part)) {
+      const handle = new THREE.Mesh(geometry, materials[spec.axis]);
       handle.renderOrder = 1000;
-      handle.userData = { axis, sign };
+      handle.userData = spec;
       handleGroup.add(handle);
       resizeHandles.push(handle);
     }
     scene.add(handleGroup);
-    updateHandleLayout(part.type === 'box' ? { size: part.size } : { radius: part.radius, height: part.height });
+    updateHandleLayout(resizeDimensions(part));
   }
   function updateHandleLayout(dimensions) {
     if (!handleGroup || !selectedMesh) return;
     selectedMesh.getWorldPosition(handleGroup.position);
     selectedMesh.getWorldQuaternion(handleGroup.quaternion);
-    for (const handle of resizeHandles) {
-      const { axis, sign } = handle.userData;
-      const extent = selectedPart.type === 'box' ? dimensions.size[axis] / 2 : axis === 1 ? dimensions.height / 2 : dimensions.radius;
-      handle.position.copy(axisVectors[axis]).multiplyScalar(sign * extent);
-    }
+    const layout = resizeHandleLayout(selectedPart, dimensions);
+    resizeHandles.forEach((handle, index) => handle.position.fromArray(layout[index].position));
   }
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
   function rebuild(doc, selectedId, selectedBoneId = null) {
@@ -252,9 +250,9 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       if (bone.id === selectedBoneId) selectedBoneObject = object;
     }
     for (const part of doc.parts) {
-      const geometry = part.type === 'box' ? new THREE.BoxGeometry(...part.size) : new THREE.CylinderGeometry(part.radius, part.radius, part.height, part.segments, 1);
-      applyAtlasUV(geometry, part, doc.texelsPerUnit);
-      const signature = textureSignature(part, doc.palette);
+      const geometry = createPartGeometry(part, THREE);
+      const hasAtlas = applyAtlasUV(geometry, part, doc.texelsPerUnit) !== null;
+      const signature = hasAtlas ? textureSignature(part, doc.palette) : null;
       let cached = textureCache.get(part.id);
       if (!signature && cached) { cached.texture.dispose(); textureCache.delete(part.id); cached = null; }
       else if (signature && cached && cached.signature !== signature) { cached.texture.dispose(); textureCache.delete(part.id); cached = null; }
@@ -314,21 +312,45 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const sameTransform = (left, right) => Object.entries(left).every(([key, value]) => Array.isArray(value)
     ? value.every((item, index) => item === right[key][index])
     : value === right[key]);
+  function replacePreviewGeometry(mesh, part) {
+    const oldGeometry = mesh.geometry;
+    const geometry = createPartGeometry(part, THREE);
+    applyAtlasUV(geometry, part, currentDoc.texelsPerUnit);
+    mesh.geometry = geometry;
+    for (const child of mesh.children) if (child.geometry === oldGeometry) child.geometry = geometry;
+    oldGeometry.dispose();
+  }
   function originalResizeTransform(drag) {
     if (drag.part.type === 'box') return { position: [...drag.part.position], size: [...drag.part.size] };
+    if (drag.part.type === 'sphere') return { radius: drag.part.radius };
     if (drag.axis === 1) return { position: [...drag.part.position], height: drag.part.height };
+    if (drag.radiusEnd) return { [drag.radiusEnd === 'top' ? 'radiusTop' : 'radiusBottom']: drag.part[drag.radiusEnd === 'top' ? 'radiusTop' : 'radiusBottom'] ?? drag.part.radius };
     return { radius: drag.part.radius };
   }
   function applyResizePreview(drag, snappedDelta) {
-    const { axis, sign, part, mesh, worldAxis } = drag;
+    const { axis, sign, radiusEnd, part, mesh, worldAxis } = drag;
     let transform, dimensions;
-    if (part.type === 'cylinder' && axis !== 1) {
+    if (part.type === 'sphere') {
+      const radius = THREE.MathUtils.clamp(part.radius + sign * snappedDelta, 1, 10000);
+      transform = { radius }; dimensions = { radius };
+      mesh.scale.set(...resizePreviewScale(part, dimensions));
+    } else if (part.type === 'cylinder' && radiusEnd) {
+      const key = radiusEnd === 'top' ? 'radiusTop' : 'radiusBottom';
+      const original = part[key] ?? part.radius;
+      const radius = THREE.MathUtils.clamp(original + sign * snappedDelta, 0, 10000);
+      const other = radiusEnd === 'top' ? (part.radiusBottom ?? part.radius) : (part.radiusTop ?? part.radius);
+      if (radius === 0 && other === 0) return;
+      transform = { [key]: radius };
+      dimensions = { ...resizeDimensions(part), [key]: radius };
+      replacePreviewGeometry(mesh, { ...part, [key]: radius });
+      mesh.scale.set(1, 1, 1);
+    } else if (axis !== 1 && part.type !== 'box') {
       const radius = THREE.MathUtils.clamp(part.radius + sign * snappedDelta, 1, 10000);
       transform = { radius };
-      dimensions = { radius, height: part.height };
+      dimensions = { ...resizeDimensions(part), radius };
       const bindPosition = part.bone ? boneObjects.get(part.bone).userData.bindPosition : [0, 0, 0];
       mesh.position.fromArray(part.position.map((value, index) => value - bindPosition[index]));
-      mesh.scale.set(radius / part.radius, 1, radius / part.radius);
+      mesh.scale.set(...resizePreviewScale(part, dimensions));
     } else {
       const originalExtent = part.type === 'box' ? part.size[axis] : part.height;
       const extent = THREE.MathUtils.clamp(originalExtent + sign * snappedDelta, 1, 10000);
@@ -339,11 +361,11 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         const size = [...part.size]; size[axis] = extent;
         transform = { position, size };
         dimensions = { size };
-        mesh.scale.set(size[0] / part.size[0], size[1] / part.size[1], size[2] / part.size[2]);
+        mesh.scale.set(...resizePreviewScale(part, dimensions));
       } else {
         transform = { position, height: extent };
-        dimensions = { radius: part.radius, height: extent };
-        mesh.scale.set(1, extent / part.height, 1);
+        dimensions = { ...resizeDimensions(part), height: extent };
+        mesh.scale.set(...resizePreviewScale(part, dimensions));
       }
       const bindPosition = part.bone ? boneObjects.get(part.bone).userData.bindPosition : [0, 0, 0];
       mesh.position.fromArray(position.map((value, index) => value - bindPosition[index]));
@@ -364,8 +386,9 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       const bindPosition = drag.part.bone ? boneObjects.get(drag.part.bone).userData.bindPosition : [0, 0, 0];
       drag.mesh.position.fromArray(drag.part.position.map((value, index) => value - bindPosition[index]));
       drag.mesh.scale.set(1, 1, 1);
+      if (drag.radiusEnd) replacePreviewGeometry(drag.mesh, drag.part);
       onTransformPreview(drag.part.id, originalResizeTransform(drag));
-      updateHandleLayout(drag.part.type === 'box' ? { size: drag.part.size } : { radius: drag.part.radius, height: drag.part.height });
+      updateHandleLayout(resizeDimensions(drag.part));
       render();
     }
   }
@@ -376,7 +399,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const handle = raycaster.intersectObjects(resizeHandles, false)[0]?.object;
     if (!handle) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    const { axis, sign } = handle.userData;
+    const { axis, sign, radiusEnd } = handle.userData;
     const worldQuaternion = selectedMesh.getWorldQuaternion(new THREE.Quaternion());
     const worldAxis = axisVectors[axis].clone().applyQuaternion(worldQuaternion).normalize();
     const planeNormal = new THREE.Vector3();
@@ -391,7 +414,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     if (!initialPoint) return;
     renderer.domElement.setPointerCapture(event.pointerId);
     controls.enabled = false;
-    resizeDrag = { pointerId: event.pointerId, axis, sign, part: structuredClone(selectedPart), mesh: selectedMesh, worldAxis, plane, initialPoint, snappedDelta: 0, transform: null };
+    resizeDrag = { pointerId: event.pointerId, axis, sign, radiusEnd, part: structuredClone(selectedPart), mesh: selectedMesh, worldAxis, plane, initialPoint, snappedDelta: 0, transform: null };
     resizeDrag.transform = originalResizeTransform(resizeDrag);
   }, true);
   renderer.domElement.addEventListener('pointermove', event => {
@@ -414,7 +437,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const faceNameForIntersection = (part, intersection) => {
     const normal = intersection.face?.normal;
     if (!normal) return null;
-    if (part.type === 'cylinder') return Math.abs(normal.y) < .5 ? 'side' : normal.y > 0 ? 'up' : 'down';
+    if (part.type === 'cylinder') return Math.abs(normal.y) < .999 ? 'side' : normal.y > 0 ? 'up' : 'down';
+    if (part.type === 'sphere' || part.type === 'capsule') return 'surface';
     if (normal.x > .5) return 'right';
     if (normal.x < -.5) return 'left';
     if (normal.y > .5) return 'up';
@@ -459,7 +483,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     return cached;
   }
   function paintAt(stroke, hit) {
-    const sideWidth = stroke.part.type === 'cylinder' ? textureLayout(stroke.part, currentDoc.texelsPerUnit).faces.side[2] : 0;
+    const sideWidth = stroke.part.type !== 'box' ? textureLayout(stroke.part, currentDoc.texelsPerUnit).size[0] : 0;
     const continuousFace = stroke.previous?.face && stroke.previous.face === hit.face
       && !(hit.face === 'side' && Math.abs(stroke.previous.x - hit.x) > sideWidth / 2);
     const points = continuousFace ? linePixels(stroke.previous, hit) : [[hit.x, hit.y]];

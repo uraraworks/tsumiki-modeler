@@ -9,9 +9,14 @@ function withCommandDefaults(doc, cmd) {
     if (supplied.color === undefined) part.color = doc.palette[0];
     if (supplied.texture === undefined) {
       delete part.texture;
+      const positiveIntegers = values => values.every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000);
+      const validCylinderRadii = [part.radiusTop ?? part.radius, part.radiusBottom ?? part.radius]
+        .every(value => Number.isSafeInteger(value) && value >= 0 && value <= 10000);
       const textureDimensionsAreValid = part.type === 'box'
-        ? Array.isArray(part.size) && part.size.length === 3 && part.size.every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000)
-        : part.type === 'cylinder' && [part.radius, part.height].every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000);
+        ? Array.isArray(part.size) && part.size.length === 3 && positiveIntegers(part.size)
+        : part.type === 'sphere' ? positiveIntegers([part.radius])
+          : part.type === 'cylinder' ? positiveIntegers([part.radius, part.height]) && validCylinderRadii
+            : part.type === 'capsule' && positiveIntegers([part.radius, part.height]);
       // 不正な寸法はテクスチャ生成で先に失敗させず、validateDocの具体的な検証理由へ回す。
       if (textureDimensionsAreValid) part.texture = createBlankTexture(part, doc.texelsPerUnit);
     }
@@ -91,11 +96,15 @@ export function applyCommand(doc, cmd) {
       case 'removePart': next.parts.splice(index, 1); break;
       case 'setTransform':
         for (const [key, value] of Object.entries(cmd.transform)) {
-          if (!['position', 'size', 'rotation', 'radius', 'height', 'segments'].includes(key)) throw new Error('未対応の変形プロパティです。');
+          if (!['position', 'size', 'rotation', 'radius', 'radiusTop', 'radiusBottom', 'height', 'segments'].includes(key)) throw new Error('未対応の変形プロパティです。');
           part[key] = structuredClone(value);
         }
         // 不正な巨大値で行列を確保する前に、従来の上限検証へ回す。
-        if ((part.type === 'box' ? part.size : [part.radius, part.height]).every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000)) resizePartTexture(part, next.texelsPerUnit);
+        const positiveDimensions = (part.type === 'box' ? part.size : part.type === 'sphere' ? [part.radius] : [part.radius, part.height])
+          .every(value => Number.isSafeInteger(value) && value >= 1 && value <= 10000);
+        const cylinderRadii = part.type !== 'cylinder' || [part.radiusTop ?? part.radius, part.radiusBottom ?? part.radius]
+          .every(value => Number.isSafeInteger(value) && value >= 0 && value <= 10000);
+        if (positiveDimensions && cylinderRadii) resizePartTexture(part, next.texelsPerUnit);
         break;
       case 'setColor': part.color = cmd.color; break;
       case 'rename': part.name = cmd.name; break;

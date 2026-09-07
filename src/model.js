@@ -4,6 +4,8 @@ export const DEFAULT_TEXELS_PER_UNIT = 4;
 export const DEFAULT_PALETTE = ['#e0a070', '#e8ce9e', '#c96c64', '#689caa', '#646f8c', '#849b69', '#b692bb', '#ece5d8'];
 export const PALETTE_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
 const integer = (value, min = -10000, max = 10000) => Number.isSafeInteger(value) && value >= min && value <= max;
+export const partRadiusTop = part => part.radiusTop ?? part.radius;
+export const partRadiusBottom = part => part.radiusBottom ?? part.radius;
 export function textureLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
   if (part.type === 'box') {
     const [w, h, d] = part.size.map(value => value * texelsPerUnit);
@@ -16,14 +18,21 @@ export function textureLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
       },
     };
   }
-  const diameter = part.radius * 2 * texelsPerUnit;
-  const circumference = Math.max(1, Math.ceil(2 * Math.PI * part.radius * texelsPerUnit));
-  const sideHeight = part.height * texelsPerUnit;
+  if (part.type === 'sphere' || part.type === 'capsule') {
+    const surfaceWidth = Math.max(1, Math.ceil(2 * Math.PI * part.radius * texelsPerUnit));
+    const surfaceHeight = (part.type === 'sphere' ? part.radius * 2 : part.height + part.radius * 2) * texelsPerUnit;
+    return { size: [surfaceWidth, surfaceHeight], faces: { surface: [0, 0, surfaceWidth, surfaceHeight] } };
+  }
+  const topRadius = partRadiusTop(part), bottomRadius = partRadiusBottom(part);
+  const topDiameter = topRadius * 2 * texelsPerUnit, bottomDiameter = bottomRadius * 2 * texelsPerUnit;
+  const maxDiameter = Math.max(topDiameter, bottomDiameter);
+  const circumference = Math.max(1, Math.ceil(2 * Math.PI * Math.max(topRadius, bottomRadius) * texelsPerUnit));
+  const sideHeight = Math.ceil(Math.hypot(part.height, topRadius - bottomRadius) * texelsPerUnit);
   return {
-    size: [Math.max(circumference, diameter * 2), diameter + sideHeight],
+    size: [Math.max(circumference, topDiameter + bottomDiameter), maxDiameter + sideHeight],
     faces: {
-      up: [0, 0, diameter, diameter], down: [diameter, 0, diameter, diameter],
-      side: [0, diameter, circumference, sideHeight],
+      up: [0, 0, topDiameter, topDiameter], down: [topDiameter, 0, bottomDiameter, bottomDiameter],
+      side: [0, maxDiameter, circumference, sideHeight],
     },
   };
 }
@@ -123,11 +132,19 @@ export function validateDoc(doc) {
     if (!part || typeof part.id !== 'string' || !part.id || part.id.length > 100 || ids.has(part.id)) throw new Error('パーツIDが空か重複しています。');
     ids.add(part.id);
     if (part.bone !== null && !boneIds.has(part.bone)) throw new Error(`${part.name ?? part.id}の所属ボーンが見つかりません。`);
-    if (typeof part.name !== 'string' || !part.name.trim() || part.name.length > 100 || !['box', 'cylinder'].includes(part.type)) throw new Error('パーツの名前または種類が不正です。');
-    for (const key of ['position', 'size', 'rotation']) {
-      if (!Array.isArray(part[key]) || part[key].length !== 3 || !part[key].every(v => integer(v, key === 'size' ? 1 : -10000))) throw new Error('座標・回転は−10000〜10000の整数、サイズは1〜10000の整数にしてください。');
+    if (typeof part.name !== 'string' || !part.name.trim() || part.name.length > 100 || !['box', 'cylinder', 'sphere', 'capsule'].includes(part.type)) throw new Error('パーツの名前または種類が不正です。');
+    for (const key of ['position', 'rotation']) {
+      if (!Array.isArray(part[key]) || part[key].length !== 3 || !part[key].every(v => integer(v))) throw new Error('座標・回転は−10000〜10000の整数にしてください。');
     }
-    if (!integer(part.radius, 1) || !integer(part.height, 1) || !integer(part.segments, 3, 64) || !/^#[0-9a-f]{6}$/i.test(part.color)) throw new Error('半径・高さ・分割数・色が不正です（分割数は3〜64）。');
+    if (part.type === 'box' && (!Array.isArray(part.size) || part.size.length !== 3 || !part.size.every(v => integer(v, 1)))) throw new Error('サイズは1〜10000の整数にしてください。');
+    if (part.type !== 'box' && (!integer(part.radius, 1) || !integer(part.segments, 3, 64))) throw new Error('半径は1〜10000、分割数は3〜64の整数にしてください。');
+    if (['cylinder', 'capsule'].includes(part.type) && !integer(part.height, 1)) throw new Error('高さは1〜10000の整数にしてください。');
+    if (part.type === 'cylinder') {
+      if (part.radiusTop !== undefined && !integer(part.radiusTop, 0)) throw new Error('上半径は0〜10000の整数にしてください。');
+      if (part.radiusBottom !== undefined && !integer(part.radiusBottom, 0)) throw new Error('下半径は0〜10000の整数にしてください。');
+      if (partRadiusTop(part) === 0 && partRadiusBottom(part) === 0) throw new Error('上半径と下半径を同時に0にはできません。');
+    }
+    if (!/^#[0-9a-f]{6}$/i.test(part.color)) throw new Error('色は#rrggbb形式にしてください。');
     if (part.texture !== undefined) {
       const expected = textureLayout(part, doc.texelsPerUnit).size;
       const texture = part.texture;
@@ -139,10 +156,13 @@ export function validateDoc(doc) {
   return doc;
 }
 export function createPart(doc, type) {
-  if (!['box', 'cylinder'].includes(type)) throw new Error('未対応のパーツです。');
+  if (!['box', 'cylinder', 'frustum', 'sphere', 'capsule'].includes(type)) throw new Error('未対応のパーツです。');
   let number = 1;
   while (doc.parts.some(p => p.id === `p${number}`)) number++;
-  const part = { id: `p${number}`, name: `${type === 'box' ? '箱' : '円柱'} ${number}`, type, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: 8, rotation: [0, 0, 0], color: '#e0a070', bone: null };
+  const labels = { box: '箱', cylinder: '円柱', frustum: '円錐台', sphere: '球', capsule: 'カプセル' };
+  const storedType = type === 'frustum' ? 'cylinder' : type;
+  const part = { id: `p${number}`, name: `${labels[type]} ${number}`, type: storedType, position: [0, 2, 0], size: [2, 4, 2], radius: 2, height: 4, segments: type === 'sphere' ? 10 : 8, rotation: [0, 0, 0], color: '#e0a070', bone: null };
+  if (type === 'frustum') Object.assign(part, { radiusTop: 1, radiusBottom: 2 });
   part.texture = createBlankTexture(part, doc.texelsPerUnit ?? DEFAULT_TEXELS_PER_UNIT);
   return part;
 }
@@ -295,15 +315,14 @@ export function createTeapotSampleDoc() {
     parts: [], bones: [], animations: [],
   };
   const samples = [
-    { name: '本体', type: 'cylinder', position: [0, 4, 0], radius: 3, height: 6, segments: 10, color: porcelain },
-    { name: '蓋', type: 'cylinder', position: [0, 7, 0], radius: 2, height: 1, segments: 10, color: accent },
-    { name: 'つまみ', type: 'cylinder', position: [0, 8, 0], radius: 1, height: 2, segments: 8, color: accent },
-    { name: '注ぎ口（根元）', type: 'box', position: [3, 4, 0], size: [2, 3, 3], rotation: [0, 0, 15], color: porcelain },
-    { name: '注ぎ口（中間）', type: 'box', position: [4, 5, 0], size: [2, 2, 2], rotation: [0, 0, 30], color: porcelain },
-    { name: '注ぎ口（先端）', type: 'box', position: [5, 6, 0], size: [2, 1, 1], rotation: [0, 0, 45], color: porcelain },
-    { name: '取っ手（上）', type: 'box', position: [-4, 6, 0], size: [3, 1, 2], rotation: [0, 0, -30], color: porcelain },
-    { name: '取っ手（外）', type: 'box', position: [-5, 4, 0], size: [1, 5, 2], color: porcelain },
-    { name: '取っ手（下）', type: 'box', position: [-4, 2, 0], size: [3, 1, 2], rotation: [0, 0, 30], color: porcelain },
+    { name: '本体', type: 'sphere', position: [0, 4, 0], radius: 4, segments: 10, color: porcelain },
+    { name: '台座', type: 'cylinder', position: [0, 1, 0], radius: 3, radiusTop: 3, radiusBottom: 2, height: 1, segments: 10, color: accent },
+    { name: '蓋', type: 'cylinder', position: [0, 7, 0], radius: 2, radiusTop: 1, radiusBottom: 3, height: 1, segments: 10, color: accent },
+    { name: 'つまみ', type: 'sphere', position: [0, 8, 0], radius: 1, segments: 8, color: accent },
+    { name: '注ぎ口', type: 'cylinder', position: [5, 5, 0], radius: 2, radiusTop: 1, radiusBottom: 2, height: 6, segments: 10, rotation: [0, 0, 60], color: porcelain },
+    { name: '取っ手（上）', type: 'capsule', position: [-4, 6, 0], radius: 1, height: 3, segments: 8, rotation: [0, 0, 60], color: porcelain },
+    { name: '取っ手（外）', type: 'capsule', position: [-6, 4, 0], radius: 1, height: 4, segments: 8, color: porcelain },
+    { name: '取っ手（下）', type: 'capsule', position: [-4, 2, 0], radius: 1, height: 3, segments: 8, rotation: [0, 0, 120], color: porcelain },
   ];
   for (const sample of samples) {
     const { name, type, ...properties } = sample;
