@@ -32,16 +32,40 @@ assert.equal(doc.texelsPerUnit, 4);
 assert.deepEqual(textureLayout(doc.parts.find(part => part.name === '頭'), 4).size, [64, 32]);
 
 // --- 接合部の検算 -----------------------------------------------------------------
-// 静止姿勢で腕・脚の付け根が胴と数値上で重なっていること（隙間が無いこと）を確認する。
+// 静止姿勢で腕・脚の付け根が胴と数値上で接している（隙間が無い）ことを確認する。
+// ここでの「接している」はX・Y・Zの3軸すべてで範囲が重なる（境界が触れる場合を含む）ことを
+// 指す。以前はここをY方向の食い込み量だけで検算しており、腕がX方向で胴に半分めり込んでいる
+// （静止姿勢の全高にわたってX方向へ1グリッド重なっている）ことを見落としていた。
 const partByName = name => doc.parts.find(part => part.name === name);
 const boxBounds = part => ({
   min: part.position.map((value, axis) => value - part.size[axis] / 2),
   max: part.position.map((value, axis) => value + part.size[axis] / 2),
 });
 const boxesOverlap = (a, b) => [0, 1, 2].every(axis => a.min[axis] <= b.max[axis] && b.min[axis] <= a.max[axis]);
+const axisOverlap = (a, b, axis) => Math.min(a.max[axis], b.max[axis]) - Math.max(a.min[axis], b.min[axis]);
 const torsoBounds = boxBounds(partByName('胴'));
 for (const limbName of ['左腕', '右腕', '左脚', '右脚']) {
-  assert.ok(boxesOverlap(torsoBounds, boxBounds(partByName(limbName))), `${limbName}の付け根は静止時に胴と重なっている`);
+  assert.ok(boxesOverlap(torsoBounds, boxBounds(partByName(limbName))), `${limbName}の付け根は静止時に胴とX・Y・Zすべての軸で接している`);
+}
+// 腕は胴とX方向では重ならない（内側の面が胴の側面x=±2にちょうど接するのみ）。
+// 以前は腕の中心Xを肩ボーンと同じ±2に揃えていたため、腕の全高にわたってX方向へ1グリッド
+// 重なっており、腕が胴の側面に半分めり込んで見える不具合があった。
+for (const armName of ['左腕', '右腕']) {
+  const overlapX = axisOverlap(torsoBounds, boxBounds(partByName(armName)), 0);
+  assert.ok(overlapX <= 0, `${armName}は胴とX方向で重ならない（重なり量${overlapX}）＝側面に接するのみ`);
+}
+// 胴と3軸すべてで真に重なっている（＝立体として実際に交差している）パーツについては、
+// どの軸の重なりも2グリッドを超えないことを確認する。SATの最小重なり（食い込み深さ）だけを
+// 見ると、他の軸の重なりが大きくても検出できない（旧・腕バグはX方向の重なりは1グリッドでも
+// Y方向には腕の全高近く（4グリッド）重なっていた）。
+for (const limbName of ['左腕', '右腕', '左脚', '右脚']) {
+  const limbBounds = boxBounds(partByName(limbName));
+  const overlaps = [0, 1, 2].map(axis => axisOverlap(torsoBounds, limbBounds, axis));
+  if (overlaps.every(value => value > 0)) {
+    overlaps.forEach((overlap, axis) => {
+      assert.ok(overlap <= 2, `${limbName}の胴との重なり（軸${axis}）は2グリッド以下（重なり量${overlap}）`);
+    });
+  }
 }
 
 // 頭と胴のY範囲は重ならない（胴が頭に突き抜けて顔が隠れることがない）ことを検算する。
@@ -140,17 +164,22 @@ assert.ok(distance3(rotatedNearestPoint, neckPivot) <= neckSpherePart.radius + 1
 
 // --- 差し込み量（食い込み）の検算 ---------------------------------------------------
 // 「胴に食い込む量」は、腕・脚と胴のバウンディングボックスが3軸それぞれで重なる長さのうち
-// 最小のもの（＝分離軸定理でいう貫通深度）で測る。腕は胴の側面へX方向にだけ差し込んであり、
-// 脚は胴の下端へY方向にだけ差し込んであるため、他の軸の重なりが大きくても
-// （腕が胴の高さ方向に並走する、脚が胴の奥行きに収まる等）実際の差し込み量ではない。
+// 最小のもの（＝分離軸定理でいう貫通深度）で測る。脚は胴の下端へY方向にだけ差し込んで
+// あるため、他の軸の重なりが大きくても（脚が胴の奥行きに収まる等）実際の差し込み量ではない。
+// 腕は胴とX方向で重ならないよう位置を直したため、立体としての食い込みは無く（0）、
+// 隙間は肩の球だけで埋める。
 const penetrationDepth = (a, b) => {
   const overlaps = [0, 1, 2].map(axis => Math.min(a.max[axis], b.max[axis]) - Math.max(a.min[axis], b.min[axis]));
   return overlaps.every(value => value > 0) ? Math.min(...overlaps) : 0;
 };
-for (const limbName of ['左腕', '右腕', '左脚', '右脚']) {
+for (const limbName of ['左脚', '右脚']) {
   const depth = penetrationDepth(torsoBounds, boxBounds(partByName(limbName)));
   assert.ok(depth > 0, `${limbName}は胴と接触（食い込み）している`);
   assert.ok(depth <= 2, `${limbName}が胴に食い込む量(${depth})は2グリッド以下＝過剰な貫通がない`);
+}
+for (const armName of ['左腕', '右腕']) {
+  const depth = penetrationDepth(torsoBounds, boxBounds(partByName(armName)));
+  assert.equal(depth, 0, `${armName}は胴と立体的に交差していない（X方向は接するのみ、重なりは肩の球が埋める）`);
 }
 // 腕は肩ボーンより上に出ない（肩から下にだけ伸びる）。
 for (const [armName, boneId] of [['左腕', 'b4'], ['右腕', 'b5']]) {
