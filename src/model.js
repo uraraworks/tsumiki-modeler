@@ -319,7 +319,7 @@ export function createTeapotSampleDoc() {
     { name: '台座', type: 'cylinder', position: [0, 1, 0], radius: 3, radiusTop: 3, radiusBottom: 2, height: 1, segments: 10, color: accent },
     { name: '蓋', type: 'cylinder', position: [0, 7, 0], radius: 2, radiusTop: 1, radiusBottom: 3, height: 1, segments: 10, color: accent },
     { name: 'つまみ', type: 'sphere', position: [0, 8, 0], radius: 1, segments: 8, color: accent },
-    { name: '注ぎ口', type: 'cylinder', position: [5, 5, 0], radius: 2, radiusTop: 1, radiusBottom: 2, height: 6, segments: 10, rotation: [0, 0, 60], color: porcelain },
+    { name: '注ぎ口', type: 'cylinder', position: [5, 5, 0], radius: 2, radiusTop: 1, radiusBottom: 2, height: 6, segments: 10, rotation: [0, 0, 300], color: porcelain },
     { name: '取っ手（上）', type: 'capsule', position: [-4, 6, 0], radius: 1, height: 3, segments: 8, rotation: [0, 0, 60], color: porcelain },
     { name: '取っ手（外）', type: 'capsule', position: [-6, 4, 0], radius: 1, height: 4, segments: 8, color: porcelain },
     { name: '取っ手（下）', type: 'capsule', position: [-4, 2, 0], radius: 1, height: 3, segments: 8, rotation: [0, 0, 120], color: porcelain },
