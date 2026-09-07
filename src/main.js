@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createNewDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, duplicatePart, extrudeMeshFace, mirrorPart, moveMeshVertices, resizePartTexture, serializeDoc, deserializeDoc, textureLayout } from './model.js';
+import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createNewDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, convertPartToMesh, duplicatePart, estimateMeshConversion, extrudeMeshFace, mergeParts, mirrorPart, moveMeshVertices, resizePartTexture, serializeDoc, deserializeDoc, textureLayout, weldVertices } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 import { connectMcpBridge } from './bridge.js';
@@ -12,6 +12,9 @@ const partTypeLabel = part => part.type === 'box' ? '箱'
         : (part.radiusTop !== undefined || part.radiusBottom !== undefined) ? '円錐台' : '円柱';
 let doc = createSampleDoc();
 // 選択は一時的なUI状態。モデルの編集状態はdocのみに置く。
+// selectedIdsが選択の実体。selectedIdは「1個だけ選択中のときのそのID（それ以外はnull）」で、
+// 既存のギズモ・プロパティ編集など単一選択前提のコードはこれまで通りselectedIdだけを見ればよい。
+let selectedIds = ['p2'];
 let selectedId = 'p2';
 let selectedBoneId = null;
 const history = new CommandHistory();
@@ -38,16 +41,18 @@ const status = (message, error = false) => {
   $('#status').classList.toggle('error', error);
 };
 function refresh() {
-  if (!doc.parts.some(p => p.id === selectedId)) selectedId = null;
+  selectedIds = selectedIds.filter(id => doc.parts.some(p => p.id === id));
+  if (!doc.parts.some(p => p.id === selectedId)) selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   if (!doc.bones.some(bone => bone.id === selectedBoneId)) selectedBoneId = null;
   const selectedPartForFaces = doc.parts.find(p => p.id === selectedId);
   selectedFaces = selectedPartForFaces?.type === 'mesh' ? selectedFaces.filter(index => index < selectedPartForFaces.faces.length) : [];
   selectedVertices = selectedPartForFaces?.type === 'mesh' ? selectedVertices.filter(index => index < selectedPartForFaces.vertices.length) : [];
-  viewport?.rebuild(doc, selectedId, selectedBoneId);
+  viewport?.rebuild(doc, selectedId, selectedBoneId, selectedIds);
   viewport?.setFaceSelection(selectedFaces);
   viewport?.setVertexSelection(selectedVertices);
   updateFaceUi();
   $('#part-count').textContent = `${doc.parts.length} 個`;
+  $('#merge-parts').disabled = selectedIds.length < 2;
   const paletteKey = JSON.stringify(doc.palette);
   if (paletteKey !== renderedPalette) {
     renderedPalette = paletteKey;
@@ -62,22 +67,25 @@ function refresh() {
   updatePaintUi();
   $('#part-list').replaceChildren(...doc.parts.map(part => {
     const li = document.createElement('li'), button = document.createElement('button');
-    button.type = 'button'; button.setAttribute('aria-pressed', String(part.id === selectedId));
+    button.type = 'button'; button.setAttribute('aria-pressed', String(selectedIds.includes(part.id)));
     const swatch = document.createElement('span'); swatch.className = 'part-swatch'; swatch.style.backgroundColor = part.color;
     const name = document.createElement('span'); name.className = 'part-label'; name.textContent = part.name;
     const kind = document.createElement('span'); kind.className = 'part-kind'; kind.textContent = partTypeLabel(part);
-    button.append(swatch, name, kind); button.addEventListener('click', () => select(part.id)); li.append(button); return li;
+    button.append(swatch, name, kind); button.addEventListener('click', event => selectInList(part.id, event)); li.append(button); return li;
   }));
   const part = doc.parts.find(p => p.id === selectedId);
   $('#delete').disabled = !part;
   $('#duplicate').disabled = !part; $('#mirror').disabled = !part;
-  $('#convert-to-mesh').disabled = !part || part.type !== 'box';
+  $('#convert-to-mesh').disabled = !part || part.type === 'mesh';
   $('#undo').disabled = !history.past.length; $('#redo').disabled = !history.future.length;
   $('#sample-new').setAttribute('aria-pressed', String(activeSample === 'new'));
   $('#sample-human').setAttribute('aria-pressed', String(activeSample === 'human'));
   $('#sample-chest').setAttribute('aria-pressed', String(activeSample === 'chest'));
   $('#sample-teapot').setAttribute('aria-pressed', String(activeSample === 'teapot'));
-  $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part;
+  const multiSelected = selectedIds.length > 1;
+  $('#properties-form').hidden = !part; $('#empty-selection').hidden = !!part || multiSelected;
+  $('#multi-selection').hidden = !multiSelected;
+  if (multiSelected) $('#multi-selection').textContent = `${selectedIds.length} 個のパーツを選択中です。プロパティ編集は1つだけ選択しているときにできます。「結合」でこれらを1つのメッシュにまとめられます。`;
   $('#part-type').textContent = part ? partTypeLabel(part) : '';
   $('#uv-preview-section').hidden = !part;
   $('#bones-section').hidden = !['bone', 'animation'].includes(transformMode);
@@ -109,6 +117,7 @@ function refresh() {
     $('#mesh-vertex-count').textContent = `${part.vertices.length} 個`;
     $('#mesh-face-count').textContent = `${part.faces.length} 個`;
   }
+  $('#weld-vertices').disabled = part?.type !== 'mesh';
   document.querySelectorAll('[data-vector]').forEach(input => {
     const value = part[input.dataset.vector];
     if (Array.isArray(value)) input.value = value[Number(input.dataset.axis)];
@@ -251,10 +260,36 @@ function previewPaintPixels(partId, pixels) {
     context.fillRect(x * scale, y * scale, scale, scale);
   }
 }
-function select(id) {
-  selectedId = id; selectedFaces = []; selectedVertices = [];
+function applySelection(ids) {
+  selectedIds = ids;
+  selectedId = ids.length === 1 ? ids[0] : null;
+  selectedFaces = []; selectedVertices = [];
   refresh();
+}
+// 単一選択の入口（3Dビューポートのクリック、複製・ミラー・追加直後の選択などから使う）。
+function select(id) {
+  applySelection(id ? [id] : []);
   if (transformMode === 'face') status(faceModeStatusMessage());
+}
+// パーツ一覧のクリック専用。Ctrl/Cmd+クリックでトグル、Shift+クリックで範囲選択、修飾キー無しは単一選択。
+function selectInList(id, event) {
+  const additive = event.ctrlKey || event.metaKey;
+  const range = event.shiftKey;
+  if (range && selectedIds.length) {
+    const ids = doc.parts.map(p => p.id);
+    const anchorIndex = ids.indexOf(selectedIds[selectedIds.length - 1]);
+    const targetIndex = ids.indexOf(id);
+    if (anchorIndex >= 0 && targetIndex >= 0) {
+      const [from, to] = anchorIndex < targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+      applySelection([...new Set([...selectedIds, ...ids.slice(from, to + 1)])]);
+      return;
+    }
+  }
+  if (additive) {
+    applySelection(selectedIds.includes(id) ? selectedIds.filter(existing => existing !== id) : [...selectedIds, id]);
+    return;
+  }
+  select(id);
 }
 // メッシュ編集モードで、選択中パーツの状態に応じた案内文を返す（未変換パーツでは何も起きない問題への対策）。
 function faceModeStatusMessage() {
@@ -366,14 +401,65 @@ function execute(command, nextSelection = selectedId, successMessage = null) {
       if (original?.type === 'mesh' && Array.isArray(command.delta) && command.delta.some(value => value !== 0)) {
         pixelsLost = moveMeshVertices(original, command.vertexIndices, command.delta, doc.texelsPerUnit).pixelsLost;
       }
+    } else if (command.type === 'convertToMesh') {
+      const original = doc.parts.find(part => part.id === command.partId);
+      if (original && original.type !== 'mesh') pixelsLost = convertPartToMesh(original, doc.texelsPerUnit).pixelsLost;
+    } else if (command.type === 'weldVertices') {
+      const original = doc.parts.find(part => part.id === command.partId);
+      if (original?.type === 'mesh') pixelsLost = weldVertices(original, command.threshold, doc.texelsPerUnit).pixelsLost;
     }
-    doc = history.execute(doc, command); selectedId = nextSelection; refresh();
+    doc = history.execute(doc, command); selectedId = nextSelection; selectedIds = nextSelection ? [nextSelection] : []; refresh();
     const lostMessage = command.type === 'extrudeFace' ? '面の構成変更により、一部のテクスチャ内容が失われました。'
       : command.type === 'moveVertices' ? '頂点移動で面のサイズが変わり、一部のテクスチャ内容が失われました。'
-        : 'サイズ縮小により、転写範囲外のテクスチャ内容が消えました。';
+        : command.type === 'convertToMesh' ? 'メッシュへの変換でテクスチャ内容が失われました（新しいメッシュは無地から塗り直してください）。'
+          : command.type === 'weldVertices' ? '頂点の統合で面のサイズが変わり、一部のテクスチャ内容が失われました。'
+            : 'サイズ縮小により、転写範囲外のテクスチャ内容が消えました。';
     status(pixelsLost ? lostMessage : (successMessage ?? '変更しました。JSON保存で作品を保存できます。'));
   }
   catch (error) { refresh(); status(error.message, true); }
+}
+// 結合前に、未変換パーツをすべてメッシュ化した場合の頂点・面の合計を見積もり、多すぎれば確認/拒否する。
+// ボーンが混在している場合も確認する（続行すると1つ目のパーツのボーンへ統一される）。
+// 実際の結合はmodel.jsのmergeParts（コマンドと同じ関数）を先に計算してメッセージを作り、
+// 本適用はhistory.execute経由のmergePartsコマンドで行う（extrudeFace等と同じ「プレビュー先読み」の作法）。
+function mergeSelectedParts() {
+  if (selectedIds.length < 2) return;
+  const parts = selectedIds.map(id => doc.parts.find(candidate => candidate.id === id)).filter(Boolean);
+  if (parts.length < 2) return;
+  let totalVertices = 0, totalFaces = 0;
+  for (const part of parts) {
+    const estimate = estimateMeshConversion(part);
+    totalVertices += estimate.vertices; totalFaces += estimate.faces;
+  }
+  if (totalVertices > 2000 || totalFaces > 2000) {
+    status(`結合すると頂点 約${totalVertices}個・面 約${totalFaces}個になり、上限（2000）を超えるため結合できません。分割数を減らすか、パーツを分けて結合してください。`, true);
+    return;
+  }
+  if ((totalVertices > 300 || totalFaces > 300) && !confirm(`結合すると頂点 約${totalVertices}個・面 約${totalFaces}個になります。続けますか？`)) return;
+  const boneIds = new Set(parts.map(part => part.bone));
+  if (boneIds.size > 1 && !confirm('選択したパーツには異なるボーンが割り当てられています。結合すると1つ目のパーツのボーンに統一されます。続けますか？')) return;
+  try {
+    if (playing) stopPlayback();
+    const preview = mergeParts(doc, selectedIds, doc.texelsPerUnit);
+    const beforeIds = new Set(doc.parts.map(p => p.id));
+    doc = history.execute(doc, { type: 'mergeParts', partIds: [...selectedIds] });
+    const mergedPart = doc.parts.find(p => !beforeIds.has(p.id));
+    applySelection(mergedPart ? [mergedPart.id] : []);
+    const notes = [];
+    if (preview.shapeRounded) notes.push('回転の影響で頂点座標を整数に丸めたため、形状がわずかに変わっている場合があります');
+    if (preview.textureSkipped) notes.push('一部のテクスチャは転写しきれず、パーツ色で塗りつぶしました');
+    status(`${parts.length}個のパーツを結合しました。${notes.length ? notes.join('。') + '。' : ''}`);
+  } catch (error) { refresh(); status(error.message, true); }
+}
+// 溶接：選択中のmeshパーツ内の近い頂点を統合する。面が実際に繋がるため、ボーンで曲げたときに
+// 割れなくなる代わりに、統合した範囲は1つの塊として一緒に動くことをステータスで伝える。
+function weldSelectedPart() {
+  const part = doc.parts.find(p => p.id === selectedId);
+  if (!part || part.type !== 'mesh') return;
+  const threshold = Number($('#weld-threshold').value);
+  if (!Number.isFinite(threshold) || threshold < 0) { status('しきい値は0以上の数値にしてください。', true); return; }
+  if (!confirm(`${part.name} の頂点を溶接します。距離${threshold}以内の頂点が1つに統合され、面が本当に繋がります（ボーンで曲げても割れなくなる代わりに、統合した範囲は1つの塊として一緒に動きます）。よろしいですか？`)) return;
+  execute({ type: 'weldVertices', partId: part.id, threshold }, part.id, `${part.name} の頂点を溶接しました。`);
 }
 function hasPartCapacity() {
   if (doc.parts.length < 1000) return true;
@@ -456,14 +542,26 @@ function setTransformMode(mode) {
   }
   else status(mode === 'translate' ? '移動ギズモでパーツを移動します。' : '回転ギズモでパーツを回転します。');
 }
-// メッシュ編集モードへ入る前に、選択中パーツが箱ならメッシュへ変換するか確認する。
+// 変換前に頂点・面数を見積もり、多すぎる場合は確認またはエラーにする（曲面プリミティブは
+// 分割数次第で頂点・面が非常に多くなるため）。確認して進める場合はconvertToMeshコマンドを発行する。
+function requestConvertToMesh(part) {
+  const estimate = estimateMeshConversion(part);
+  if (estimate.vertices > 2000 || estimate.faces > 2000) {
+    status(`頂点 約${estimate.vertices}個・面 約${estimate.faces}個になり、上限（2000）を超えるため変換できません。分割数を減らしてください。`, true);
+    return false;
+  }
+  if ((estimate.vertices > 300 || estimate.faces > 300) && !confirm(`頂点 ${estimate.vertices} 個・面 ${estimate.faces} 個になります。続けますか？`)) return false;
+  execute({ type: 'convertToMesh', partId: part.id }, part.id, `${part.name} をメッシュに変換しました。`);
+  return true;
+}
+// メッシュ編集モードへ入る前に、選択中パーツが未変換ならメッシュへ変換するか確認する。
 // 「いいえ」の場合はモードへ入らず、既存のモードのままにする（原因1の対策）。
 function requestFaceMode() {
   if (transformMode === 'face') { setTransformMode('translate'); return; }
   const part = doc.parts.find(p => p.id === selectedId);
-  if (part && part.type === 'box') {
-    if (!confirm(`${part.name} は箱です。メッシュに変換しますか？`)) return;
-    execute({ type: 'convertToMesh', partId: part.id }, part.id, `${part.name} をメッシュに変換しました。`);
+  if (part && part.type !== 'mesh') {
+    if (!confirm(`${part.name} は${partTypeLabel(part)}です。メッシュに変換しますか？`)) return;
+    if (!requestConvertToMesh(part)) return;
   }
   setTransformMode('face');
 }
@@ -610,8 +708,10 @@ $('#mirror').addEventListener('click', () => duplicateSelected(true));
 $('#convert-to-mesh').addEventListener('click', () => {
   const part = doc.parts.find(p => p.id === selectedId);
   if (!part) return;
-  execute({ type: 'convertToMesh', partId: part.id }, part.id, `${part.name} をメッシュに変換しました。`);
+  requestConvertToMesh(part);
 });
+$('#weld-vertices').addEventListener('click', weldSelectedPart);
+$('#merge-parts').addEventListener('click', mergeSelectedParts);
 $('#delete').addEventListener('click', () => execute({ type: 'removePart', partId: selectedId }, null));
 $('#add-bone').addEventListener('click', () => {
   const bone = createBone(doc, selectedBoneId);
@@ -643,6 +743,7 @@ function switchSample(sample) {
   activeSample = sample;
   history.reset();
   selectedId = doc.parts[0]?.id ?? null;
+  selectedIds = selectedId ? [selectedId] : [];
   selectedBoneId = null;
   refresh();
   status(sample === 'new' ? '新規モデルを作成しました。' : `${label}サンプルに切り替えました。`);
@@ -690,7 +791,7 @@ $('#file-input').addEventListener('change', async event => {
     if (file.size > 5 * 1024 * 1024) throw new Error('JSONは5MB以下にしてください。');
     const loaded = deserializeDoc(await file.text());
     // 読込は別ドキュメントへの切替。編集履歴を持ち越さない。
-    stopPlayback(); doc = loaded; currentFrame = 0; activeSample = null; history.reset(); selectedId = doc.parts[0]?.id ?? null; selectedBoneId = null; refresh(); status(`${file.name}を読み込みました。`);
+    stopPlayback(); doc = loaded; currentFrame = 0; activeSample = null; history.reset(); selectedId = doc.parts[0]?.id ?? null; selectedIds = selectedId ? [selectedId] : []; selectedBoneId = null; refresh(); status(`${file.name}を読み込みました。`);
   } catch (error) { status(`読込できませんでした：${error.message}`, true); }
   finally { event.target.value = ''; }
 });
@@ -706,7 +807,7 @@ function replaceFromBridge(model) {
   if (playing) stopPlayback();
   doc = history.replace(doc, model);
   activeSample = null; currentFrame = 0;
-  selectedId = doc.parts[0]?.id ?? null; selectedBoneId = null;
+  selectedId = doc.parts[0]?.id ?? null; selectedIds = selectedId ? [selectedId] : []; selectedBoneId = null;
   refresh(); status('MCPからモデル全体を差し替えました。');
   return { model: cloneDoc(doc) };
 }

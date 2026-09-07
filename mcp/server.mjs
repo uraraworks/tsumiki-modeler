@@ -79,7 +79,11 @@ const COMMAND_DESCRIPTION = `コマンド配列を順番に既存applyCommandへ
 - {type:"assignPartBone", partId:string, boneId:string|null}
 - {type:"paintPixels", partId:string, pixels:[[x,y,"."またはパレット文字],...]}
 - {type:"convertToMesh", partId:string}
-  箱(box)パーツを頂点・面を直接持つmesh型へ変換します。現在は箱からの変換のみ対応（他の形状を指定するとエラー）。変換後のパーツはsizeを持たず、vertices:[[x,y,z],...]（整数座標、外から見て反時計回りの面）とfaces:[[i,j,k,l]または[i,j,k],...]（vertices内インデックス）を持ちます。UVは面ごとに平面展開するため、変換直後（全面が軸に平行な矩形）は元の箱の6面展開と同じ見た目になります。mesh型はaddPartでは作成できず、このコマンドでのみ生成されます。
+  box・cylinder（円錐台含む）・sphere・capsuleパーツを頂点・面を直接持つmesh型へ変換します。変換後のパーツは元の形状パラメータ（size/radius/height/segments等）を持たず、vertices:[[x,y,z],...]（整数座標、外から見て反時計回りの面）とfaces:[[i,j,k,l]または[i,j,k],...]（vertices内インデックス）を持ちます。boxはUVを面ごとに平面展開するため元の6面展開と同じ見た目になりますが、曲面プリミティブ（cylinder/sphere/capsule）はUVの構造が変わるためテクスチャを引き継げず、着色済みだった場合はパーツ色による無地へ戻ります（validate_modelやget_modelで確認できます）。分割数（segments）が大きい曲面を変換すると頂点・面が非常に多くなり、上限（各2000）を超えるとエラーになります。mesh型はaddPartでは作成できず、このコマンドでのみ生成されます。
+- {type:"mergeParts", partIds:string[]}
+  2つ以上のパーツを1つのmeshパーツへ結合します。mesh以外のパーツは自動でconvertToMesh相当の変換を行ってから結合します（曲面パーツぶんのテクスチャは失われ、パーツ色による面塗りへフォールバックします）。各パーツのposition/rotationを適用してワールド座標へ展開したうえで頂点座標を整数に丸めるため、15度刻みなど非整数になる回転を含む結合では形状がわずかに変わることがあります。結合後の名前は「（1つ目のパーツ名）ほか」、色・所属ボーンは1つ目のパーツのものを採用します（異なるボーンが混ざっていても警告なく1つ目へ統一されるため、必要ならmergeParts前にassignPartBoneで揃えてください）。partIdsに指定したパーツは結合後に削除されます。
+- {type:"weldVertices", partId:string, threshold:number}
+  meshパーツ内で、距離がthreshold以下の頂点どうしを1つに統合します（0＝完全に同じ座標のみ）。統合によって3頂点未満に潰れる面は自動的に除去されます。溶接すると面が実際に繋がるため、ボーンで曲げても割れなくなりますが、溶接した頂点をまたぐ範囲は事実上1つの塊として一緒に動きます。
 - {type:"extrudeFace", partId:string, faces:number[], distance:number}
   meshパーツの指定した面（faces:part.faces内のインデックス配列、複数指定可、各面を個別にその法線方向へ押し出す）を、1グリッド単位でdistanceだけ法線方向へ押し出します。負のdistanceで内側へ凹ませられます。distance=0は何もしません（コマンドとして発行しても履歴に積まれません）。元の面は新しい位置の面に置き換わり、辺ごとに側面の四角形が追加されます（四角形1面につき頂点+4・面+4）。頂点は複製され、常に整数座標を保ちます。テクスチャは面の対応関係から可能な限り引き継ぎ、新しくできた側面・移動後の面のうち対応の無い部分は未指定（.）で埋まります。
 - {type:"moveVertices", partId:string, vertexIndices:number[], delta:[x,y,z]}

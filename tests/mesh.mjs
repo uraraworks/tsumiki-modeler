@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { applyCommand, CommandHistory } from '../src/commands.js';
-import { convertBoxToMesh, createNewDoc, createPart, extrudeMeshFace, mirrorPart, textureLayout, validateDoc } from '../src/model.js';
+import { convertBoxToMesh, convertPartToMesh, createNewDoc, createPart, extrudeMeshFace, mergeParts, mirrorPart, textureLayout, validateDoc, weldVertices } from '../src/model.js';
 import { calculatePartBounds, createPartGeometry } from '../src/geometry.js';
 
 // --- 箱からの変換：頂点数・面数・validateDoc ---
@@ -41,10 +41,10 @@ assert.doesNotThrow(() => validateDoc(withCommand));
 // アトラスの詰め方（全体サイズ）は箱と変わりうるが、元が無地なら変換後も無地のまま。
 assert.ok(withCommand.parts[0].texture.rows.every(row => [...row].every(character => character === '.')), 'テクスチャ内容（無地）を引き継ぐ');
 
-// --- 箱以外を渡すとエラーになる ---
+// --- convertBoxToMeshは箱専用のまま（曲面はconvertPartToMesh/convertToMeshコマンド経由） ---
 const sphere = createPart(doc, 'sphere');
 assert.throws(() => convertBoxToMesh(sphere), /対応していません|箱ではない/);
-assert.throws(() => applyCommand({ ...doc, parts: [sphere] }, { type: 'convertToMesh', partId: sphere.id }));
+assert.doesNotThrow(() => applyCommand({ ...doc, parts: [sphere] }, { type: 'convertToMesh', partId: sphere.id }), '球はconvertToMeshコマンドでメッシュへ変換できる');
 
 // --- 面のインデックスが範囲外のdocは弾かれる ---
 const outOfRangeFaceDoc = { ...doc, parts: [{ ...mesh, faces: [[0, 1, 2, 99]] }] };
@@ -177,5 +177,103 @@ for (let faceIndex = meshWithTexture.faces.length; faceIndex < extrudedPart.face
 assert.throws(() => extrudeMeshFace(mesh, [99], 1, doc.texelsPerUnit), /面/);
 assert.throws(() => extrudeMeshFace(box, [0], 1, doc.texelsPerUnit), /メッシュではない/);
 assert.throws(() => extrudeMeshFace(mesh, [0], 1.5, doc.texelsPerUnit), /整数/);
+
+// --- 曲面プリミティブ（円柱・円錐台・球・カプセル）もメッシュへ変換できること ---
+for (const spec of [
+  { type: 'cylinder', extra: {} },
+  { type: 'cylinder', extra: { radiusTop: 1, radiusBottom: 3 } }, // 円錐台
+  { type: 'sphere', extra: {} },
+  { type: 'capsule', extra: {} },
+]) {
+  const curvedPart = { ...createPart(doc, spec.type), ...spec.extra };
+  const { part: converted, pixelsLost } = convertPartToMesh(curvedPart, doc.texelsPerUnit);
+  assert.equal(converted.type, 'mesh', `${spec.type}はmeshへ変換される`);
+  assert.ok(converted.vertices.length >= 4 && converted.vertices.length <= 2000, `${spec.type}の頂点数は妥当な範囲`);
+  assert.ok(converted.faces.length >= 4 && converted.faces.length <= 2000, `${spec.type}の面数は妥当な範囲`);
+  assert.ok(converted.vertices.every(v => v.every(Number.isInteger)), `${spec.type}変換後も頂点座標は整数`);
+  assert.ok(converted.faces.every(face => face.length === 3 || face.length === 4), `${spec.type}の面は三角形か四角形`);
+  assert.equal(pixelsLost, false, '無地のパーツはテクスチャ喪失なし');
+  assert.doesNotThrow(() => validateDoc({ ...doc, parts: [converted] }), `${spec.type}変換後のdocはvalidateDocを通る`);
+}
+
+// --- 結合：離れた箱2つを結合すると頂点・面が単純合算になる（接触が無いので重複除去は起きない） ---
+{
+  const mergeDoc = createNewDoc();
+  const boxA = { ...createPart(mergeDoc, 'box'), id: 'pa', position: [0, 2, 0], size: [2, 2, 2] };
+  delete boxA.texture;
+  const boxB = { ...createPart(mergeDoc, 'box'), id: 'pb', position: [10, 2, 0], size: [2, 2, 2] };
+  delete boxB.texture;
+  const baseDoc = validateDoc({ ...mergeDoc, parts: [boxA, boxB] });
+  const result = mergeParts(baseDoc, ['pa', 'pb'], baseDoc.texelsPerUnit);
+  assert.equal(result.doc.parts.length, 1, '結合で1パーツにまとまる');
+  const merged = result.doc.parts.find(p => p.id === result.mergedPartId);
+  assert.equal(merged.vertices.length, 16, '離れた箱2つは頂点16個（重複無し）');
+  assert.equal(merged.faces.length, 12, '離れた箱2つは面12個（重複無し）');
+  assert.equal(merged.name, `${boxA.name}ほか`, '結合後の名前は1つ目のパーツ名＋ほか');
+  assert.equal(merged.color, boxA.color, '結合後の色は1つ目のパーツの色');
+  assert.equal(result.shapeRounded, false, '軸平行な箱の結合では丸めによる形状変化は起きない');
+  assert.doesNotThrow(() => validateDoc(result.doc), '結合後もvalidateDocを通る');
+
+  // --- コマンド経由：Undoで元の複数パーツへ戻る ---
+  const history = new CommandHistory();
+  const afterMerge = history.execute(baseDoc, { type: 'mergeParts', partIds: ['pa', 'pb'] });
+  assert.equal(afterMerge.parts.length, 1, 'コマンド経由でも1パーツにまとまる');
+  const afterUndo = history.undo(afterMerge);
+  assert.equal(afterUndo.parts.length, 2, 'Undoで元の2パーツに戻る');
+  assert.deepEqual(afterUndo.parts.map(p => p.id).sort(), ['pa', 'pb'], 'Undoで元のIDが戻る');
+}
+
+// --- 回転したパーツを結合すると、頂点は整数に丸められ、shapeRoundedが立つ ---
+{
+  const rotDoc = createNewDoc();
+  const boxA = { ...createPart(rotDoc, 'box'), id: 'pa', position: [0, 2, 0], size: [2, 2, 2] };
+  delete boxA.texture;
+  const boxB = { ...createPart(rotDoc, 'box'), id: 'pb', position: [8, 2, 0], size: [2, 2, 2], rotation: [0, 15, 0] };
+  delete boxB.texture;
+  const baseDoc = validateDoc({ ...rotDoc, parts: [boxA, boxB] });
+  const result = mergeParts(baseDoc, ['pa', 'pb'], baseDoc.texelsPerUnit);
+  assert.equal(result.shapeRounded, true, '15度回転したパーツの結合では丸めが発生する');
+  const merged = result.doc.parts.find(p => p.id === result.mergedPartId);
+  assert.ok(merged.vertices.every(v => v.every(Number.isInteger)), '結合後も頂点座標は整数');
+  assert.doesNotThrow(() => validateDoc(result.doc));
+}
+
+// --- 結合は2つ未満の指定を拒否する ---
+assert.throws(() => mergeParts(doc, ['p1'], doc.texelsPerUnit), /2つ以上/);
+
+// --- 溶接：重複頂点が統合され、面数が正しく減る ---
+{
+  // 同じ頂点を共有するはずの2つの四角形（頂点0,1が両方の面で重複している）を、
+  // わざと別インデックスの重複頂点として持つ小さなmeshを作る。
+  const weldPart = {
+    ...createPart(doc, 'box'), type: 'mesh',
+    vertices: [
+      [0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], // 面0
+      [0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2], // 面1（0,1と同じ座標を別インデックスで重複させてある）
+    ],
+    faces: [[0, 1, 2, 3], [4, 5, 6, 7]],
+  };
+  delete weldPart.texture;
+  const { part: welded, verticesRemoved, facesRemoved } = weldVertices(weldPart, 0, doc.texelsPerUnit);
+  assert.equal(verticesRemoved, 2, '重複していた2頂点が統合される');
+  assert.equal(welded.vertices.length, 6, '8頂点→6頂点に減る');
+  assert.equal(welded.faces.length, 2, '面自体は退化せず2枚のまま残る');
+  assert.equal(facesRemoved, 0);
+  assert.doesNotThrow(() => validateDoc({ ...doc, parts: [welded] }));
+
+  // --- 退化した面が除去されること：しきい値を大きくして全頂点を1点に統合する ---
+  const { part: fullyWelded, facesRemoved: removedAll } = weldVertices(weldPart, 100, doc.texelsPerUnit);
+  assert.equal(fullyWelded.vertices.length, 1, 'しきい値が十分大きいと全頂点が1つに統合される');
+  assert.equal(fullyWelded.faces.length, 0, '1点に潰れた面はすべて退化として除去される');
+  assert.equal(removedAll, 2);
+
+  // --- コマンド経由のUndo ---
+  const weldDoc = validateDoc({ ...doc, parts: [{ ...weldPart, id: 'pw' }] });
+  const history = new CommandHistory();
+  const afterWeld = history.execute(weldDoc, { type: 'weldVertices', partId: 'pw', threshold: 0 });
+  assert.equal(afterWeld.parts[0].vertices.length, 6, 'コマンド経由でも溶接される');
+  const afterUndo = history.undo(afterWeld);
+  assert.equal(afterUndo.parts[0].vertices.length, 8, 'Undoで溶接前の頂点数に戻る');
+}
 
 console.log('mesh tests: OK');

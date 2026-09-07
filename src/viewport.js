@@ -389,7 +389,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     render();
   }
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
-  function rebuild(doc, selectedId, selectedBoneId = null) {
+  function rebuild(doc, selectedId, selectedBoneId = null, selectedIds = null) {
     finishPaintStroke(null, false);
     paintSampleStart = null;
     if (resizeDrag) finishResizeDrag(null, false);
@@ -464,8 +464,10 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       mesh.rotation.set(...part.rotation.map(THREE.MathUtils.degToRad));
       mesh.userData.partId = part.id;
       mesh.layers.set(modelLayer);
-      const outline = new THREE.Mesh(geometry, createOutlineMaterial(part.id === selectedId));
-      outline.userData = { partId: part.id, selected: part.id === selectedId };
+      // 複数選択時（selectedIds指定時）は該当パーツすべてを、単一選択時はselectedIdのみをアウトラインで示す。
+      const isOutlined = selectedIds ? selectedIds.includes(part.id) : part.id === selectedId;
+      const outline = new THREE.Mesh(geometry, createOutlineMaterial(isOutlined));
+      outline.userData = { partId: part.id, selected: isOutlined };
       mesh.add(outline); outlineMeshes.push(outline); (part.bone ? boneObjects.get(part.bone) : scene).add(mesh); pickable.push(mesh);
       if (part.id === selectedId) { selectedMesh = mesh; selectedPart = part; }
     }

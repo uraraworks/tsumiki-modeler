@@ -1,4 +1,4 @@
-import { PALETTE_CHARS, cloneDoc, convertBoxToMesh, createBlankTexture, createBone, createPart, extrudeMeshFace, moveMeshVertices, resizePartTexture, validateDoc } from './model.js';
+import { PALETTE_CHARS, cloneDoc, convertPartToMesh, createBlankTexture, createBone, createPart, extrudeMeshFace, mergeParts, moveMeshVertices, resizePartTexture, validateDoc, weldVertices } from './model.js';
 
 function withCommandDefaults(doc, cmd) {
   if (!cmd || typeof cmd !== 'object' || Array.isArray(cmd)) return cmd;
@@ -33,12 +33,16 @@ function withCommandDefaults(doc, cmd) {
 // 入力を変更せず、新しい検証済みドキュメントを返す。
 export function applyCommand(doc, cmd) {
   cmd = withCommandDefaults(doc, cmd);
-  const next = cloneDoc(doc);
+  let next = cloneDoc(doc);
   if (cmd.type === 'addPart') next.parts.push(cloneDoc(cmd.part));
   else if (cmd.type === 'addBone') next.bones.push(cloneDoc(cmd.bone));
   else if (cmd.type === 'addAnimation') {
     if (!Array.isArray(next.animations)) next.animations = [];
     next.animations.push(cloneDoc(cmd.animation));
+  }
+  else if (cmd.type === 'mergeParts') {
+    if (!Array.isArray(cmd.partIds) || cmd.partIds.length < 2) throw new Error('結合するパーツを2つ以上指定してください。');
+    next = mergeParts(doc, cmd.partIds, next.texelsPerUnit).doc;
   }
   else if (['setKeyframe', 'removeKeyframe', 'setClipSettings'].includes(cmd.type)) {
     const animation = next.animations?.find(candidate => candidate.id === cmd.animationId);
@@ -108,7 +112,14 @@ export function applyCommand(doc, cmd) {
         break;
       case 'setColor': part.color = cmd.color; break;
       case 'rename': part.name = cmd.name; break;
-      case 'convertToMesh': next.parts[index] = convertBoxToMesh(part, next.texelsPerUnit); break;
+      case 'convertToMesh': next.parts[index] = convertPartToMesh(part, next.texelsPerUnit).part; break;
+      case 'weldVertices': {
+        if (part.type !== 'mesh') throw new Error(`「${part.name}」はメッシュではないため、溶接できません。`);
+        if (!Number.isFinite(cmd.threshold) || cmd.threshold < 0) throw new Error('溶接のしきい値は0以上の数値にしてください。');
+        const { part: welded } = weldVertices(part, cmd.threshold, next.texelsPerUnit);
+        next.parts[index] = welded;
+        break;
+      }
       case 'extrudeFace': {
         if (part.type !== 'mesh') throw new Error(`「${part.name}」はメッシュではないため、面を押し出せません。`);
         if (!Array.isArray(cmd.faces) || !cmd.faces.length) throw new Error('押し出す面を1つ以上指定してください。');

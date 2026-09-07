@@ -310,6 +310,146 @@ export function convertBoxToMesh(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) 
   }
   return next;
 }
+// 円柱・円錐台・球・カプセルは共通して「軸まわりの回転体（同心円の輪の積み重ね）」として作れる。
+// rows は下から上へ並んだ{y, radius}の配列（radiusが実質0＝極/頂点なら1頂点の扇として繋ぐ）。
+// これを1箇所に集約することで、3形状すべてのメッシュ化ロジックを使い回せる。
+function buildRevolutionMesh(segments, rows) {
+  const vertices = [];
+  const built = rows.map(({ y, radius }) => {
+    if (radius <= 1e-9) { vertices.push([0, y, 0]); return { pole: vertices.length - 1 }; }
+    const ring = [];
+    for (let i = 0; i < segments; i++) {
+      const angle = i / segments * 2 * Math.PI;
+      vertices.push([radius * Math.cos(angle), y, radius * Math.sin(angle)]);
+      ring.push(vertices.length - 1);
+    }
+    return { ring };
+  });
+  const faces = [];
+  for (let row = 0; row < built.length - 1; row++) {
+    const a = built[row], b = built[row + 1];
+    if (a.ring && b.ring) {
+      for (let i = 0; i < segments; i++) { const j = (i + 1) % segments; faces.push([a.ring[i], a.ring[j], b.ring[j], b.ring[i]]); }
+    } else if (a.pole !== undefined && b.ring) {
+      for (let i = 0; i < segments; i++) { const j = (i + 1) % segments; faces.push([a.pole, b.ring[i], b.ring[j]]); }
+    } else if (a.ring && b.pole !== undefined) {
+      for (let i = 0; i < segments; i++) { const j = (i + 1) % segments; faces.push([b.pole, a.ring[j], a.ring[i]]); }
+    }
+  }
+  return { vertices, faces };
+}
+// 曲面プリミティブ（円柱・円錐台・球・カプセル）を、丸め・重複除去の前段の実数頂点で生成する。
+// segments件のリング分割はThree.jsのジオメトリと厳密には一致しないが、見た目の輪郭（半径・高さの
+// 変化）は一致させてあるため、変換前後で原形は保たれる。
+function curvedPrimitiveMeshData(part) {
+  const n = part.segments;
+  if (part.type === 'cylinder') {
+    const half = part.height / 2, top = partRadiusTop(part), bottom = partRadiusBottom(part);
+    const rows = [];
+    if (bottom > 0) rows.push({ y: -half, radius: 0 }); // 下ぶたの中心（下半径が0なら頂点自体が中心になるため省く）
+    rows.push({ y: -half, radius: bottom });
+    rows.push({ y: half, radius: top });
+    if (top > 0) rows.push({ y: half, radius: 0 }); // 上ぶたの中心
+    return buildRevolutionMesh(n, rows);
+  }
+  if (part.type === 'sphere') {
+    const heightSegments = Math.max(4, Math.ceil(n / 2)); // geometry.jsのSphereGeometry呼び出しと同じ規則
+    const rows = Array.from({ length: heightSegments + 1 }, (_, iy) => {
+      const theta = iy / heightSegments * Math.PI; // 0=北極 → π=南極
+      return { y: part.radius * Math.cos(theta), radius: part.radius * Math.sin(theta) };
+    });
+    return buildRevolutionMesh(n, rows);
+  }
+  if (part.type === 'capsule') {
+    const r = part.radius, half = part.height / 2, m = Math.max(2, n);
+    const rows = [];
+    for (let iy = 0; iy <= m; iy++) { const theta = iy / m * (Math.PI / 2); rows.push({ y: half + r * Math.cos(theta), radius: r * Math.sin(theta) }); } // 上極→胴上端
+    rows.push({ y: -half, radius: r }); // 胴下端（胴上端と重複しないよう別行として持つ）
+    for (let iy = 1; iy <= m; iy++) { const theta = iy / m * (Math.PI / 2); rows.push({ y: -half - r * Math.sin(theta), radius: r * Math.cos(theta) }); } // 胴下端→下極
+    return buildRevolutionMesh(n, rows);
+  }
+  throw new Error(`未対応の形状です: ${part.type}`);
+}
+// 凸形状（円柱・円錐台・球・カプセルはいずれも凸）限定の簡便な法線補正。頂点全体の重心から見て
+// 面が内向きなら頂点順序を反転する。曲面プリミティブの生成では辺の巻き方向を厳密に管理しない代わりに
+// この後処理で必ず外向きへ揃える（extrudeMeshFaceのテストにある「法線は外側を向く」検証と同じ考え方）。
+function autoOrientFaces(vertices, faces) {
+  const center = [0, 1, 2].map(axis => vertices.reduce((sum, v) => sum + v[axis], 0) / vertices.length);
+  return faces.map(face => {
+    const points = face.map(index => vertices[index]);
+    const normal = flatNormal(points[0], points[1], points[2]);
+    const centroid = [0, 1, 2].map(axis => points.reduce((sum, p) => sum + p[axis], 0) / points.length);
+    const outward = [0, 1, 2].map(axis => centroid[axis] - center[axis]);
+    const dot = normal[0] * outward[0] + normal[1] * outward[1] + normal[2] * outward[2];
+    return dot < 0 ? [...face].reverse() : face;
+  });
+}
+// 頂点座標を整数に丸めた後、同一座標に重なった頂点をマージし、3頂点未満に潰れた面を除去する。
+// faceMap[新面index] = 旧面index（元の面との対応。mergePartsのテクスチャ転写に使う）。
+function dedupeAndFilterMesh(vertices, faces) {
+  const keyOf = v => v.join(',');
+  const seen = new Map();
+  const dedupedVertices = [];
+  const remapIndex = vertices.map(vertex => {
+    const key = keyOf(vertex);
+    if (seen.has(key)) return seen.get(key);
+    const index = dedupedVertices.length;
+    dedupedVertices.push(vertex);
+    seen.set(key, index);
+    return index;
+  });
+  const dedupedFaces = [], faceMap = [];
+  faces.forEach((face, originalIndex) => {
+    const remapped = face.map(index => remapIndex[index]);
+    const unique = [];
+    for (const index of remapped) if (!unique.includes(index)) unique.push(index);
+    if (unique.length < 3) return; // 全頂点が同じ点に潰れた（退化）面は捨てる
+    dedupedFaces.push(unique.length === remapped.length ? remapped : unique);
+    faceMap.push(originalIndex);
+  });
+  return { vertices: dedupedVertices, faces: dedupedFaces, faceMap };
+}
+// 曲面プリミティブ（円柱・円錐台・球・カプセル）をメッシュへ変換する見積もり。
+// 実際に頂点・面を生成して数えるため多少のコストはあるが、確認ダイアログの前に軽く呼べる程度には速い。
+export function estimateMeshConversion(part) {
+  if (part.type === 'box') return { vertices: 8, faces: 6 };
+  if (part.type === 'mesh') return { vertices: part.vertices.length, faces: part.faces.length };
+  const raw = curvedPrimitiveMeshData(part);
+  return { vertices: raw.vertices.length, faces: raw.faces.length };
+}
+// 円柱・円錐台・球・カプセルのメッシュ変換。箱と違い正確な座標に頂点を置けないため、
+// 生成後に整数丸め→重複頂点マージ→退化面除去の順で処理する（丸めで面が潰れた場合は、
+// 面ごと除去して形状を保つ。全体が潰れる場合はエラーで変換を拒否する）。
+// テクスチャは新しいメッシュのUV配置が旧来の展開と全く異なるため転写できない。着色済みだった場合は
+// pixelsLost:true を返し、呼び出し側（main.js）でステータス表示する（宣言どおり、色は
+// パーツのcolorとしてフォールバックする＝無地の見た目は保たれる）。
+function convertCurvedToMesh(part, texelsPerUnit) {
+  const raw = curvedPrimitiveMeshData(part);
+  const rounded = raw.vertices.map(vertex => vertex.map(Math.round));
+  const { vertices, faces: dedupedFaces } = dedupeAndFilterMesh(rounded, raw.faces);
+  let faces = autoOrientFaces(vertices, dedupedFaces);
+  const degenerate = new Set(degenerateMeshFaceIndices({ type: 'mesh', vertices, faces }));
+  if (degenerate.size) faces = faces.filter((_, index) => !degenerate.has(index));
+  if (vertices.length < 4 || faces.length < 4) {
+    throw new Error(`「${part.name}」は丸め誤差で形状が潰れてしまい、メッシュへ変換できません。分割数を増やすか、寸法を大きくしてください。`);
+  }
+  const next = structuredClone(part);
+  delete next.size; delete next.radius; delete next.radiusTop; delete next.radiusBottom; delete next.height; delete next.segments;
+  next.type = 'mesh';
+  next.vertices = vertices;
+  next.faces = faces;
+  const hadPaint = !!part.texture && part.texture.rows.some(row => [...row].some(character => character !== '.'));
+  next.texture = createBlankTexture(next, texelsPerUnit);
+  return { part: next, pixelsLost: hadPaint };
+}
+// 箱・円柱・円錐台・球・カプセルすべてのメッシュ変換の入口。箱は既存のconvertBoxToMesh
+// （テクスチャを面ごとに転写できる）をそのまま使い、曲面は上のconvertCurvedToMeshに委譲する。
+export function convertPartToMesh(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  if (part.type === 'mesh') throw new Error(`「${part.name}」はすでにメッシュです。`);
+  if (part.type === 'box') return { part: convertBoxToMesh(part, texelsPerUnit), pixelsLost: false };
+  if (!['cylinder', 'sphere', 'capsule'].includes(part.type)) throw new Error(`「${part.name}」は未対応の形状のため、メッシュへ変換できません。`);
+  return convertCurvedToMesh(part, texelsPerUnit);
+}
 // 押し出しは常に面の法線に最も近い座標軸方向へスナップする。頂点は必ず整数のまま
 // （軸方向×整数distanceの加算のみ）にするため、面が完全な軸平行でなくても安全側に丸める。
 function axisSnappedNormal(normal) {
@@ -426,6 +566,152 @@ export function moveMeshVertices(part, vertexIndices, delta, texelsPerUnit = DEF
   else delete next.texture;
   return { part: next, pixelsLost };
 }
+// しきい値以下の距離にある頂点どうしを1つに統合する（Union-Find）。0（既定）なら完全一致のみ。
+// 統合で3頂点未満／面積0に潰れた面は除去する。面の対応関係（faceOrigin）を保った状態で
+// rebuildMeshTexture へ渡すため、統合されず残った面のテクスチャ内容は引き継がれる。
+export function weldVertices(part, threshold = 0, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  if (part.type !== 'mesh') throw new Error(`「${part.name}」はメッシュではないため、溶接できません。`);
+  if (!Number.isFinite(threshold) || threshold < 0) throw new Error('溶接のしきい値は0以上の数値にしてください。');
+  const count = part.vertices.length;
+  const parent = Array.from({ length: count }, (_, index) => index);
+  const find = index => { while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; } return index; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  const thresholdSq = threshold * threshold;
+  for (let i = 0; i < count; i++) for (let j = i + 1; j < count; j++) {
+    const [ax, ay, az] = part.vertices[i], [bx, by, bz] = part.vertices[j];
+    if ((ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2 <= thresholdSq) union(i, j);
+  }
+  const groupIndex = new Map();
+  const vertices = [];
+  const remap = [];
+  for (let i = 0; i < count; i++) {
+    const root = find(i);
+    if (!groupIndex.has(root)) { groupIndex.set(root, vertices.length); vertices.push(part.vertices[root]); }
+    remap.push(groupIndex.get(root));
+  }
+  const faces = [], faceOrigin = [];
+  part.faces.forEach((face, originalIndex) => {
+    const remapped = face.map(index => remap[index]);
+    const unique = [];
+    for (const index of remapped) if (!unique.includes(index)) unique.push(index);
+    if (unique.length < 3) return;
+    faces.push(unique.length === remapped.length ? remapped : unique);
+    faceOrigin.push(originalIndex);
+  });
+  const next = structuredClone(part);
+  next.vertices = vertices;
+  next.faces = faces;
+  const degenerate = new Set(degenerateMeshFaceIndices(next));
+  let survivingFaces = next.faces, survivingOrigin = faceOrigin;
+  if (degenerate.size) {
+    survivingFaces = []; survivingOrigin = [];
+    next.faces.forEach((face, index) => { if (!degenerate.has(index)) { survivingFaces.push(face); survivingOrigin.push(faceOrigin[index]); } });
+    next.faces = survivingFaces;
+  }
+  const verticesRemoved = count - vertices.length;
+  const facesRemoved = part.faces.length - survivingFaces.length;
+  if (!verticesRemoved) return { part: structuredClone(part), pixelsLost: false, verticesRemoved: 0, facesRemoved: 0 };
+  const faceIndexMap = new Map(survivingOrigin.map((oldIndex, newIndex) => [newIndex, oldIndex]));
+  const { rows, size, pixelsLost } = rebuildMeshTexture(part, next, texelsPerUnit, faceIndexMap);
+  if (part.texture) next.texture = { size, rows };
+  else delete next.texture;
+  return { part: next, pixelsLost, verticesRemoved, facesRemoved };
+}
+// 選択した複数パーツを1つのmeshパーツへまとめる。手順：
+// 1. mesh以外は先にconvertPartToMeshで変換する（曲面はテクスチャを引き継げないため、そのパーツぶんは
+//    後段でパーツ色による面塗りへフォールバックする）。
+// 2. 各パーツのposition/rotationを適用してモデル原点基準のワールド座標へ展開し、1つの頂点・面配列にまとめる。
+// 3. 頂点座標を整数に丸める（回転が15度の倍数などで非整数になった場合はshapeRoundedを立てて呼び出し側へ知らせる）。
+// 4. 結合後のテクスチャは、まず各面をその面の由来パーツのcolorで塗りつぶし（面ごとに色を保持するフォールバック）、
+//    その上から「由来パーツが元からmeshで、実際に着色されていた」場合だけ本物のドット絵を対応する面へ転写する
+//    （曲面から変換したばかりのパーツは変換時点でテクスチャが失われているため、自然とフォールバックだけになる）。
+// ボーンが混在する場合の確認はUI側（main.js）の責務とし、ここでは常に1つ目のパーツのボーンを採用する。
+export function mergeParts(doc, partIds, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  const uniqueIds = [...new Set(partIds ?? [])];
+  if (uniqueIds.length < 2) throw new Error('結合には異なる2つ以上のパーツを指定してください。');
+  const parts = uniqueIds.map(id => doc.parts.find(candidate => candidate.id === id));
+  if (parts.some(part => !part)) throw new Error('結合対象のパーツが見つかりません。');
+
+  const mergedVertices = [], mergedFaces = [], mergedFaceColors = [];
+  const partFaceRanges = [];
+  let shapeRounded = false;
+  for (const source of parts) {
+    const meshPart = source.type === 'mesh' ? source : convertPartToMesh(source, texelsPerUnit).part;
+    const matrix = localTransformMatrix(source);
+    const startVertex = mergedVertices.length;
+    for (const vertex of meshPart.vertices) {
+      const world = transformPoint(matrix, vertex);
+      const rounded = world.map(Math.round);
+      if (!shapeRounded && rounded.some((value, axis) => Math.abs(value - world[axis]) > 1e-6)) shapeRounded = true;
+      mergedVertices.push(rounded);
+    }
+    const startFace = mergedFaces.length;
+    for (const face of meshPart.faces) { mergedFaces.push(face.map(index => index + startVertex)); mergedFaceColors.push(source.color); }
+    partFaceRanges.push({ source, faceCount: meshPart.faces.length, startFace });
+  }
+
+  const dedup = dedupeAndFilterMesh(mergedVertices, mergedFaces);
+  let { vertices, faces, faceMap } = dedup;
+  const degenerate = new Set(degenerateMeshFaceIndices({ type: 'mesh', vertices, faces }));
+  if (degenerate.size) {
+    const keptFaces = [], keptMap = [];
+    faces.forEach((face, index) => { if (!degenerate.has(index)) { keptFaces.push(face); keptMap.push(faceMap[index]); } });
+    faces = keptFaces; faceMap = keptMap;
+  }
+  if (faces.length < 4) throw new Error('結合の結果、面がほとんど潰れてしまいました（頂点の丸めが原因の可能性があります）。');
+  faces = autoOrientFaces(vertices, faces);
+
+  const first = parts[0];
+  const next = cloneDoc(doc);
+  const mergedPart = {
+    id: nextPartId(next),
+    name: uniquePartName(next, `${first.name}ほか`),
+    type: 'mesh',
+    position: [0, 0, 0], rotation: [0, 0, 0],
+    vertices, faces,
+    color: first.color,
+    bone: first.bone,
+  };
+  const layout = meshFaceLayout(mergedPart, texelsPerUnit);
+  const [width, height] = layout.size;
+  const grid = Array.from({ length: height }, () => Array(width).fill('.'));
+  const palette = [...next.palette];
+  // まず面ごとに由来パーツの色で塗る（そのパーツ色が結合後パーツの基準色と同じなら、'.'のパーツ色
+  // フォールバックに任せて塗らずに済ませる＝単色パーツどうしの結合ではパレットを消費しない）。
+  faces.forEach((face, index) => {
+    const color = mergedFaceColors[faceMap[index]];
+    if (color === mergedPart.color) return;
+    let charIndex = palette.indexOf(color);
+    if (charIndex < 0) { palette.push(color); charIndex = palette.length - 1; }
+    const [fx, fy, fw, fh] = layout.faces[index];
+    for (let y = fy; y < fy + fh; y++) for (let x = fx; x < fx + fw; x++) grid[y][x] = PALETTE_CHARS[charIndex];
+  });
+  // 続いて、元からmeshで実際に着色されていたパーツについては、対応する面へ本物のドット絵を上書き転写する。
+  let textureTransferred = false, textureSkipped = false;
+  for (const { source, faceCount, startFace } of partFaceRanges) {
+    if (source.type !== 'mesh' || !source.texture) continue;
+    const sourceLayout = meshFaceLayout(source, texelsPerUnit);
+    for (let localFace = 0; localFace < faceCount; localFace++) {
+      const oldGlobalIndex = startFace + localFace;
+      const newIndex = faceMap.indexOf(oldGlobalIndex);
+      if (newIndex < 0) { textureSkipped = true; continue; }
+      const sourceRegion = sourceLayout.faces[localFace], targetRegion = layout.faces[newIndex];
+      if (!sourceRegion || !targetRegion) continue;
+      const [sx, sy, sw, sh] = sourceRegion, [tx, ty, tw, th] = targetRegion;
+      const copyWidth = Math.min(sw, tw), copyHeight = Math.min(sh, th);
+      for (let y = 0; y < copyHeight; y++) for (let x = 0; x < copyWidth; x++) {
+        const character = source.texture.rows[sy + y][sx + x];
+        if (character !== '.') { grid[ty + y][tx + x] = character; textureTransferred = true; }
+      }
+      if (sw > copyWidth || sh > copyHeight) textureSkipped = true;
+    }
+  }
+  mergedPart.texture = { size: [width, height], rows: grid.map(row => row.join('')) };
+  next.palette = palette;
+  next.parts = next.parts.filter(part => !uniqueIds.includes(part.id));
+  next.parts.push(mergedPart);
+  return { doc: next, mergedPartId: mergedPart.id, shapeRounded, textureTransferred, textureSkipped, paletteChanged: palette.length !== doc.palette.length };
+}
 export function createBone(doc, parent = null) {
   let number = 1;
   while (doc.bones.some(bone => bone.id === `b${number}`)) number++;
@@ -449,21 +735,28 @@ const multiplyMatrix4 = (a, b) => {
   }
   return result;
 };
-const localBoneMatrix = bone => {
-  const [x, y, z] = bone.rotation.map(value => value * Math.PI / 180);
+// bones・partsどちらも{position:[x,y,z], rotation:[度,度,度]}の形を持つため共用できる
+// （partsのrotationは常に0〜359度の整数だが、mergePartsの結合計算でも同じXYZ Eulerが必要なため公開する）。
+export const localTransformMatrix = target => {
+  const [x, y, z] = target.rotation.map(value => value * Math.PI / 180);
   const cx = Math.cos(x), sx = Math.sin(x), cy = Math.cos(y), sy = Math.sin(y), cz = Math.cos(z), sz = Math.sin(z);
   return [
     cz * cy, sz * cy, -sy, 0,
     cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx, 0,
     cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx, 0,
-    bone.position[0], bone.position[1], bone.position[2], 1,
+    target.position[0], target.position[1], target.position[2], 1,
   ];
 };
+// 列優先4x4行列を1点へ適用する（mergePartsのワールド座標展開に使う）。
+export function transformPoint(matrix, point) {
+  const [x, y, z] = point;
+  return [0, 1, 2].map(row => matrix[row] * x + matrix[4 + row] * y + matrix[8 + row] * z + matrix[12 + row]);
+}
 export function calculateBoneWorldTransforms(doc) {
   const byId = new Map(doc.bones.map(bone => [bone.id, bone])), result = new Map();
   const calculate = bone => {
     if (result.has(bone.id)) return result.get(bone.id);
-    const matrix = bone.parent === null ? localBoneMatrix(bone) : multiplyMatrix4(calculate(byId.get(bone.parent)).matrix, localBoneMatrix(bone));
+    const matrix = bone.parent === null ? localTransformMatrix(bone) : multiplyMatrix4(calculate(byId.get(bone.parent)).matrix, localTransformMatrix(bone));
     const transform = { matrix, position: [matrix[12], matrix[13], matrix[14]] };
     result.set(bone.id, transform); return transform;
   };
