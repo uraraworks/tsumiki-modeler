@@ -9,6 +9,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const {
     onCommitPaint = () => {}, onHoverPaint = () => {}, onSamplePaint = () => {}, onPreviewPaint = () => {},
     onSelectBone = () => {}, onBoneTransformCommit = () => {}, onBoneTransformPreview = () => {},
+    onSelectFace = () => {},
   } = paintHandlers;
   const clickDragThreshold = 4;
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
@@ -58,6 +59,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const defaultMouseButtons = { ...controls.mouseButtons };
   let scene, gridHelper, pickable = [], outlineMeshes = [], bonePickable = [], boneVisuals = [], boneObjects = new Map(), mode = 'translate', boneTool = 'rotate';
   let selectedMesh = null, selectedPart = null, selectedBoneObject = null, partTransformProxy = null, handleGroup = null, resizeHandles = [], resizeDrag = null, currentGrid = 1;
+  let selectedFaceIndices = [], faceHighlightMesh = null;
   let currentDoc = null, paintTool = 'pen', paintCharacter = '0', paintStroke = null, paintSampleStart = null;
   let outlineMode = 'edge';
   const textureCache = new Map();
@@ -191,6 +193,38 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const layout = resizeHandleLayout(selectedPart, dimensions);
     resizeHandles.forEach((handle, index) => handle.position.fromArray(layout[index].position));
   }
+  // 選択中の面（複数可）を半透明の色で重ねてハイライトする。384x216でも判別できるよう、
+  // 深度テスト付きのpolygonOffsetで元の面のすぐ上に描画し、Zファイティングを避ける。
+  function disposeFaceHighlight() {
+    if (!faceHighlightMesh) return;
+    faceHighlightMesh.parent?.remove(faceHighlightMesh);
+    faceHighlightMesh.geometry.dispose();
+    faceHighlightMesh.material.dispose();
+    faceHighlightMesh = null;
+  }
+  function updateFaceHighlight() {
+    disposeFaceHighlight();
+    if (mode !== 'face' || !selectedMesh || selectedPart?.type !== 'mesh' || !selectedFaceIndices.length) { render(); return; }
+    const faceIndices = selectedMesh.geometry.userData?.meshFaceIndices;
+    const positionAttr = selectedMesh.geometry.getAttribute('position');
+    if (!faceIndices || !positionAttr) { render(); return; }
+    const selectedSet = new Set(selectedFaceIndices);
+    const positions = [];
+    for (let i = 0; i < positionAttr.count; i++) {
+      if (selectedSet.has(faceIndices[i])) positions.push(positionAttr.getX(i), positionAttr.getY(i), positionAttr.getZ(i));
+    }
+    if (!positions.length) { render(); return; }
+    const highlightGeometry = new THREE.BufferGeometry();
+    highlightGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const material = new THREE.MeshBasicMaterial({
+      color: '#ffe066', transparent: true, opacity: 0.55, depthTest: true, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    });
+    faceHighlightMesh = new THREE.Mesh(highlightGeometry, material);
+    faceHighlightMesh.renderOrder = 500;
+    selectedMesh.add(faceHighlightMesh);
+    render();
+  }
   // 編集のたびにドキュメントから再構築し、古いGPU資源を解放する。
   function rebuild(doc, selectedId, selectedBoneId = null) {
     finishPaintStroke(null, false);
@@ -211,7 +245,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const activePartIds = new Set(doc.parts.map(part => part.id));
     for (const [partId, cached] of textureCache) if (!activePartIds.has(partId)) { cached.texture.dispose(); textureCache.delete(partId); }
     currentDoc = doc;
-    scene = new THREE.Scene(); pickable = []; outlineMeshes = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid;
+    scene = new THREE.Scene(); pickable = []; outlineMeshes = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid; faceHighlightMesh = null;
     const light = new THREE.DirectionalLight('#ffffff', 1);
     light.position.set(-3, 8, 5);
     const ambient = new THREE.AmbientLight('#ffffff', 0.18);
@@ -285,6 +319,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     else if (partTransformProxy && ['translate', 'rotate'].includes(mode)) transformControls.attach(partTransformProxy);
     else transformControls.detach();
     if (selectedMesh && mode === 'resize') createResizeHandles(selectedPart, selectedMesh);
+    updateFaceHighlight();
     render();
   }
   let displayScale = 0;
@@ -435,6 +470,13 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     finishResizeDrag(event, true);
   }, true);
   const faceNameForIntersection = (part, intersection) => {
+    if (part.type === 'mesh') {
+      // mesh は面ごとに別々のUV領域を持つため、法線の向きだけでは面を一意に特定できない
+      // （押し出しで同じ向きの面が複数できるため）。三角形→元の面インデックスの対応を使う。
+      const faceIndices = intersection.object.geometry.userData?.meshFaceIndices;
+      const faceIndex = faceIndices ? faceIndices[intersection.faceIndex * 3] : undefined;
+      return faceIndex === undefined ? null : `mesh-${faceIndex}`;
+    }
     const normal = intersection.face?.normal;
     if (!normal) return null;
     if (part.type === 'cylinder') return Math.abs(normal.y) < .999 ? 'side' : normal.y > 0 ? 'up' : 'down';
@@ -587,6 +629,12 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       const hit = raycaster.intersectObjects(bonePickable, false)[0];
       if (hit) { onSelectBone(hit.object.userData.boneId); return; }
     }
+    if (mode === 'face' && selectedMesh && selectedPart?.type === 'mesh') {
+      const intersection = raycaster.intersectObject(selectedMesh, false)[0];
+      const faceIndices = selectedMesh.geometry.userData?.meshFaceIndices;
+      const faceIndex = intersection && faceIndices ? faceIndices[intersection.faceIndex * 3] : undefined;
+      if (faceIndex !== undefined) { onSelectFace(faceIndex, event.shiftKey); return; }
+    }
     onSelect(raycaster.intersectObjects(pickable, false)[0]?.object.userData.partId ?? null);
   });
   function resetTransformDrag() {
@@ -623,7 +671,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   return {
     rebuild,
     setMode(nextMode) {
-      if (!['translate', 'rotate', 'resize', 'paint', 'bone', 'animation'].includes(nextMode)) return;
+      if (!['translate', 'rotate', 'resize', 'paint', 'bone', 'animation', 'face'].includes(nextMode)) return;
       finishResizeDrag(null, false);
       finishPaintStroke(null, false);
       paintSampleStart = null;
@@ -637,7 +685,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         transformControls.detach();
         if (selectedMesh && !handleGroup) createResizeHandles(selectedPart, selectedMesh);
       }
-      else if (nextMode === 'paint') transformControls.detach();
+      else if (['paint', 'face'].includes(nextMode)) transformControls.detach();
       else if (['bone', 'animation'].includes(nextMode)) {
         transformControls.setMode(nextMode === 'animation' ? 'rotate' : boneTool);
         if (selectedBoneObject) transformControls.attach(selectedBoneObject); else transformControls.detach();
@@ -647,7 +695,12 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         if (partTransformProxy) transformControls.attach(partTransformProxy);
       }
       if (handleGroup) handleGroup.visible = nextMode === 'resize';
+      updateFaceHighlight();
       render();
+    },
+    setFaceSelection(indices) {
+      selectedFaceIndices = Array.isArray(indices) ? [...indices] : [];
+      updateFaceHighlight();
     },
     setBoneTool(nextTool) {
       if (!['translate', 'rotate'].includes(nextTool)) return;

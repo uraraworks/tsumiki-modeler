@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
-import { applyCommand } from '../src/commands.js';
-import { convertBoxToMesh, createNewDoc, createPart, mirrorPart, textureLayout, validateDoc } from '../src/model.js';
+import { applyCommand, CommandHistory } from '../src/commands.js';
+import { convertBoxToMesh, createNewDoc, createPart, extrudeMeshFace, mirrorPart, textureLayout, validateDoc } from '../src/model.js';
 import { calculatePartBounds, createPartGeometry } from '../src/geometry.js';
 
 // --- 箱からの変換：頂点数・面数・validateDoc ---
 const doc = createNewDoc();
 const box = doc.parts[0];
 assert.equal(box.type, 'box');
-const mesh = convertBoxToMesh(box);
+const mesh = convertBoxToMesh(box, doc.texelsPerUnit);
 assert.equal(mesh.type, 'mesh');
 assert.equal(mesh.vertices.length, 8, '箱は8頂点になる');
 assert.equal(mesh.faces.length, 6, '箱は6面になる');
@@ -20,16 +20,26 @@ assert.doesNotThrow(() => validateDoc(converted), '変換後のdocはvalidateDoc
 // 偶数サイズなら中心対称（-size/2 〜 +size/2）になる
 assert.deepEqual(calculatePartBounds(mesh), { min: [-1, -2, -1], max: [1, 2, 1] });
 
-// --- UVは元の箱の6面展開と一致する ---
+// --- UV：面ごとの平面展開でも、軸に平行な面（箱からの変換直後）は箱と同じ領域サイズになる ---
+// （最重要：斜めの面でテクセルが歪まないよう、面ごとに実寸で展開する方式へ変更したが、
+//   軸平行面ではサイズが変わらないことを保証する。名前付きキー→数値インデックスキーへ
+//   構造が変わったため、各面の[幅,高さ]の集合が一致することを比較する）。
 const boxLayout = textureLayout(box, doc.texelsPerUnit);
 const meshLayout = textureLayout(mesh, doc.texelsPerUnit);
-assert.deepEqual(meshLayout, boxLayout, '変換直後は箱と同じUVアトラス展開になる');
+// 面ごとの基準辺（U軸）の選び方により、同じ矩形が90度回転（幅と高さが入れ替わる）ことがあるが、
+// 面積・アスペクト比は変わらず「歪み」ではないため、比較時は各矩形を[短辺,長辺]へ正規化する。
+const normalizedSize = ([, , w, h]) => [Math.min(w, h), Math.max(w, h)];
+const boxFaceSizes = Object.values(boxLayout.faces).map(normalizedSize).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+const meshFaceSizes = Object.values(meshLayout.faces).map(normalizedSize).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+assert.deepEqual(meshFaceSizes, boxFaceSizes, '箱から変換した直後は、各面のUV領域サイズ（回転を除く）が箱と一致する');
+assert.equal(Object.keys(meshLayout.faces).length, 6, '面は6個ぶんの領域を持つ');
 
 // --- コマンド経由（Undo/Redoが効くこと）---
 const withCommand = applyCommand(doc, { type: 'convertToMesh', partId: box.id });
 assert.equal(withCommand.parts[0].type, 'mesh');
 assert.doesNotThrow(() => validateDoc(withCommand));
-assert.deepEqual(withCommand.parts[0].texture, box.texture, 'テクスチャはそのまま引き継ぐ');
+// アトラスの詰め方（全体サイズ）は箱と変わりうるが、元が無地なら変換後も無地のまま。
+assert.ok(withCommand.parts[0].texture.rows.every(row => [...row].every(character => character === '.')), 'テクスチャ内容（無地）を引き継ぐ');
 
 // --- 箱以外を渡すとエラーになる ---
 const sphere = createPart(doc, 'sphere');
@@ -45,7 +55,10 @@ const tooFewVerticesDoc = { ...doc, parts: [{ ...mesh, vertices: [[0, 0, 0], [1,
 assert.throws(() => validateDoc(tooFewVerticesDoc));
 const nonIntegerVertexDoc = { ...doc, parts: [{ ...mesh, vertices: mesh.vertices.map((v, i) => i === 0 ? [0.5, 0, 0] : v) }] };
 assert.throws(() => validateDoc(nonIntegerVertexDoc), /整数/);
-assert.doesNotThrow(() => validateDoc({ ...doc, parts: [{ ...mesh, faces: [[0, 1, 2]] }] }), '三角形面も許容する');
+// texture省略：面構成を変えるとUVアトラス寸法も変わるため、この検証には無関係なtextureを外す。
+const triangleMesh = { ...mesh, faces: [[0, 1, 2]] };
+delete triangleMesh.texture;
+assert.doesNotThrow(() => validateDoc({ ...doc, parts: [triangleMesh] }), '三角形面も許容する');
 
 // --- バウンディングボックス計算 ---
 const customMesh = { ...mesh, vertices: [[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0], [0, 0, 2], [4, 0, 2], [4, 3, 2], [0, 3, 2]] };
@@ -80,6 +93,7 @@ for (let i = 0; i < mesh.faces.length; i++) {
 // --- geometry生成（フラット法線・三角形分割）---
 class Float32BufferAttributeStub { constructor(array, itemSize) { this.array = array; this.itemSize = itemSize; this.count = array.length / itemSize; } }
 class BufferGeometryStub {
+  constructor() { this.userData = {}; }
   setAttribute(name, attribute) { this[`_${name}`] = attribute; }
   getAttribute(name) { return this[`_${name}`]; }
 }
@@ -99,5 +113,69 @@ for (let triangle = 0; triangle < position.count / 3; triangle++) {
   assert.deepEqual(n0, n1); assert.deepEqual(n0, n2);
 }
 assert.deepEqual([geometry.boundingBox.min.values, geometry.boundingBox.max.values], [[-1, -2, -1], [1, 2, 1]]);
+// 各頂点が属する元のface index（面選択・押し出しのヒット判定・UVの両方が依存する）
+assert.equal(geometry.userData.meshFaceIndices.length, position.count);
+for (let face = 0; face < mesh.faces.length; face++) {
+  for (let i = face * 6; i < face * 6 + 6; i++) assert.equal(geometry.userData.meshFaceIndices[i], face);
+}
+
+// --- 押し出し：四角形1面を押し出すと、頂点+4、面は元の1面が移動し側面4面が増える ---
+function faceCentroid(vertices, face) {
+  const points = face.map(index => vertices[index]);
+  return [0, 1, 2].map(axis => points.reduce((sum, p) => sum + p[axis], 0) / points.length);
+}
+function meshCentroid(vertices) {
+  return [0, 1, 2].map(axis => vertices.reduce((sum, v) => sum + v[axis], 0) / vertices.length);
+}
+const extrudeResult = extrudeMeshFace(mesh, [0], 1, doc.texelsPerUnit);
+const extrudedMesh = extrudeResult.part;
+assert.equal(extrudedMesh.vertices.length, mesh.vertices.length + 4, '頂点が4個増える');
+assert.equal(extrudedMesh.faces.length, mesh.faces.length + 4, '面が4個増える（元の面は移動、側面4面が追加）');
+assert.ok(extrudedMesh.vertices.every(vertex => vertex.every(Number.isInteger)), '押し出し後も頂点座標は整数');
+assert.doesNotThrow(() => validateDoc({ ...doc, parts: [extrudedMesh] }), '押し出し後もvalidateDocを通る');
+assert.equal(extrudeResult.pixelsLost, false, 'テクスチャなしの押し出しはピクセル損失なし');
+
+// 押し出し後も全面の法線が外向きを保っていること（各面の重心が、メッシュ全体の重心から見て
+// 面法線の向きにあること＝凸形状で「法線が外を向いている」ことの一般的な確認方法）。
+const center = meshCentroid(extrudedMesh.vertices);
+for (const face of extrudedMesh.faces) {
+  const normal = faceNormal(extrudedMesh.vertices, face);
+  const centroid = faceCentroid(extrudedMesh.vertices, face);
+  const outward = [0, 1, 2].map(axis => centroid[axis] - center[axis]);
+  const dot = normal[0] * outward[0] + normal[1] * outward[1] + normal[2] * outward[2];
+  assert.ok(dot > 0, '面の法線は外側を向いている');
+}
+
+// --- 押し出し距離0はコマンドを発行しない（applyCommandは無変化、CommandHistoryは履歴に積まない） ---
+const meshDocForZero = { ...doc, parts: [mesh] };
+const zeroResult = applyCommand(meshDocForZero, { type: 'extrudeFace', partId: mesh.id, faces: [0], distance: 0 });
+assert.deepEqual(zeroResult, validateDoc(structuredClone(meshDocForZero)), '距離0は何も変えない');
+const zeroHistory = new CommandHistory();
+const afterZero = zeroHistory.execute(meshDocForZero, { type: 'extrudeFace', partId: mesh.id, faces: [0], distance: 0 });
+assert.equal(zeroHistory.past.length, 0, '距離0はUndo履歴に積まれない');
+assert.deepEqual(afterZero, validateDoc(structuredClone(meshDocForZero)));
+
+// --- コマンド経由の押し出し：面の対応関係からテクスチャを可能な限り引き継ぐ ---
+const meshWithTexture = withCommand.parts[0];
+const layoutBeforeExtrude = textureLayout(meshWithTexture, doc.texelsPerUnit);
+const untouchedFaceIndex = 1;
+const [px, py] = layoutBeforeExtrude.faces[untouchedFaceIndex];
+const paintedDoc = applyCommand(withCommand, { type: 'paintPixels', partId: meshWithTexture.id, pixels: [[px, py, '1']] });
+const paintedPart = paintedDoc.parts[0];
+assert.equal(paintedPart.texture.rows[py][px], '1');
+const extrudedDoc = applyCommand(paintedDoc, { type: 'extrudeFace', partId: paintedPart.id, faces: [0], distance: 1 });
+const extrudedPart = extrudedDoc.parts[0];
+const layoutAfterExtrude = textureLayout(extrudedPart, doc.texelsPerUnit);
+const [px2, py2] = layoutAfterExtrude.faces[untouchedFaceIndex];
+assert.equal(extrudedPart.texture.rows[py2][px2], '1', '押し出しに関係ない面のドットは保持される');
+for (let faceIndex = meshWithTexture.faces.length; faceIndex < extrudedPart.faces.length; faceIndex++) {
+  const [fx, fy, fw, fh] = layoutAfterExtrude.faces[faceIndex];
+  for (let y = fy; y < fy + fh; y++) for (let x = fx; x < fx + fw; x++) assert.equal(extrudedPart.texture.rows[y][x], '.', '新しくできた面は未指定で埋まる');
+}
+
+// --- 不正な入力はエラーになる ---
+assert.throws(() => extrudeMeshFace(mesh, [99], 1, doc.texelsPerUnit), /面/);
+assert.throws(() => extrudeMeshFace(box, [0], 1, doc.texelsPerUnit), /メッシュではない/);
+assert.throws(() => extrudeMeshFace(mesh, [0], 1.5, doc.texelsPerUnit), /整数/);
 
 console.log('mesh tests: OK');

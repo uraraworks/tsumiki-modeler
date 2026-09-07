@@ -1,4 +1,4 @@
-import { PALETTE_CHARS, cloneDoc, convertBoxToMesh, createBlankTexture, createBone, createPart, resizePartTexture, validateDoc } from './model.js';
+import { PALETTE_CHARS, cloneDoc, convertBoxToMesh, createBlankTexture, createBone, createPart, extrudeMeshFace, resizePartTexture, validateDoc } from './model.js';
 
 function withCommandDefaults(doc, cmd) {
   if (!cmd || typeof cmd !== 'object' || Array.isArray(cmd)) return cmd;
@@ -108,7 +108,16 @@ export function applyCommand(doc, cmd) {
         break;
       case 'setColor': part.color = cmd.color; break;
       case 'rename': part.name = cmd.name; break;
-      case 'convertToMesh': next.parts[index] = convertBoxToMesh(part); break;
+      case 'convertToMesh': next.parts[index] = convertBoxToMesh(part, next.texelsPerUnit); break;
+      case 'extrudeFace': {
+        if (part.type !== 'mesh') throw new Error(`「${part.name}」はメッシュではないため、面を押し出せません。`);
+        if (!Array.isArray(cmd.faces) || !cmd.faces.length) throw new Error('押し出す面を1つ以上指定してください。');
+        if (!Number.isSafeInteger(cmd.distance)) throw new Error('押し出し距離は整数にしてください。');
+        if (cmd.distance === 0) break; // 距離0はコマンドとして何もしない（CommandHistory側でも無変化として履歴に積まれない）。
+        const { part: extruded } = extrudeMeshFace(part, cmd.faces, cmd.distance, next.texelsPerUnit);
+        next.parts[index] = extruded;
+        break;
+      }
       case 'assignPartBone': part.bone = cmd.boneId; break;
       case 'paintPixels': {
         if (!Array.isArray(cmd.pixels)) throw new Error('ペイント内容が不正です。');

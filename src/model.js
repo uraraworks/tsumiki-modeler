@@ -11,6 +11,67 @@ export const meshBounds = vertices => ({
   min: [0, 1, 2].map(axis => Math.min(...vertices.map(vertex => vertex[axis]))),
   max: [0, 1, 2].map(axis => Math.max(...vertices.map(vertex => vertex[axis]))),
 });
+// 3次元ベクトルの最小限の演算。geometry.jsもこれを使い、法線計算を1箇所へ集約する
+// （model.js→geometry.jsの逆方向importは循環になるため、法線計算はここに置く）。
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const normalize3 = v => { const length = Math.hypot(...v) || 1; return v.map(c => c / length); };
+// 平面な四角形/三角形の頂点列から面ごとのフラット法線を求める（3頂点で十分：面は平面である前提）。
+export function flatNormal(p0, p1, p2) {
+  return normalize3(cross3(sub3(p1, p0), sub3(p2, p0)));
+}
+// 面をその法線に垂直な2軸（面の最初の辺をU軸、法線×U軸をV軸）へ投影する。
+// 軸に平行な矩形面なら、U軸が辺そのものと一致するため、投影後の幅・高さが辺の実長と厳密に一致する
+// （法線方向へ単純投影する方式だと、斜めの面でテクセルが実寸より縮んでしまうため採用しない）。
+function projectFace(vertices) {
+  const origin = vertices[0];
+  const normal = flatNormal(vertices[0], vertices[1], vertices[2]);
+  const edge = sub3(vertices[1], vertices[0]);
+  const edgeLength = Math.hypot(...edge) || 1;
+  const u = edge.map(c => c / edgeLength);
+  const v = cross3(normal, u);
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  for (const vertex of vertices) {
+    const d = sub3(vertex, origin);
+    const projectedU = dot3(d, u), projectedV = dot3(d, v);
+    minU = Math.min(minU, projectedU); maxU = Math.max(maxU, projectedU);
+    minV = Math.min(minV, projectedV); maxV = Math.max(maxV, projectedV);
+  }
+  return { origin, u, v, normal, minU, minV, width: maxU - minU, height: maxV - minV };
+}
+// 面ごとの矩形をアトラスへ単純な棚（シェルフ）詰めする。最適な詰め方は狙わず、
+// 「面ごとに歪みのない矩形サイズを確保できていること」だけを保証する。
+function packRects(rects) {
+  const order = rects.map((_, index) => index).sort((a, b) => rects[b].h - rects[a].h || rects[b].w - rects[a].w);
+  const totalArea = rects.reduce((sum, rect) => sum + rect.w * rect.h, 0);
+  const targetWidth = Math.max(1, ...rects.map(rect => rect.w), Math.ceil(Math.sqrt(totalArea)));
+  const positions = Array(rects.length);
+  let x = 0, y = 0, shelfHeight = 0, atlasWidth = 0;
+  for (const index of order) {
+    const rect = rects[index];
+    if (x > 0 && x + rect.w > targetWidth) { x = 0; y += shelfHeight; shelfHeight = 0; }
+    positions[index] = { x, y };
+    atlasWidth = Math.max(atlasWidth, x + rect.w);
+    x += rect.w;
+    shelfHeight = Math.max(shelfHeight, rect.h);
+  }
+  return { width: atlasWidth, height: y + shelfHeight, positions };
+}
+// mesh用：面ごとに平面展開したUVアトラスを求める。箱と違い曲面プリミティブの軸投影を使わないため、
+// 押し出しでできた斜めの面でもテクセルが歪まない。軸に平行な矩形面（箱からの変換直後）では、
+// projectFaceがその面の辺の実長をそのまま返すため、従来の6面展開と同じ領域サイズになる。
+export function meshFaceLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  const projections = part.faces.map(face => projectFace(face.map(index => part.vertices[index])));
+  const rects = projections.map(projection => ({
+    w: Math.max(1, Math.round(projection.width * texelsPerUnit)),
+    h: Math.max(1, Math.round(projection.height * texelsPerUnit)),
+  }));
+  const packed = packRects(rects);
+  const faces = {};
+  packed.positions.forEach((position, index) => { faces[index] = [position.x, position.y, rects[index].w, rects[index].h]; });
+  return { size: [Math.max(1, packed.width), Math.max(1, packed.height)], faces, projections };
+}
 export function textureLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
   if (part.type === 'box') {
     const [w, h, d] = part.size.map(value => value * texelsPerUnit);
@@ -24,17 +85,10 @@ export function textureLayout(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
     };
   }
   if (part.type === 'mesh') {
-    // 箱からの変換直後は、バウンディングボックスが元のsizeと一致するため箱と同じ展開になる。
-    const { min, max } = meshBounds(part.vertices);
-    const [w, h, d] = [0, 1, 2].map(axis => (max[axis] - min[axis]) * texelsPerUnit);
-    return {
-      size: [2 * (d + w), d + h],
-      faces: {
-        up: [d, 0, w, d], down: [d + w, 0, w, d],
-        right: [0, d, d, h], front: [d, d, w, h],
-        left: [d + w, d, d, h], back: [2 * d + w, d, w, h],
-      },
-    };
+    // 各面を法線に垂直な2軸へ平面展開する（meshFaceLayout参照）。箱から変換した直後は
+    // 全面が軸に平行な矩形のため、各面の領域サイズは従来の6面展開と一致する。
+    const layout = meshFaceLayout(part, texelsPerUnit);
+    return { size: layout.size, faces: layout.faces, projections: layout.projections };
   }
   if (part.type === 'sphere' || part.type === 'capsule') {
     const surfaceWidth = Math.max(1, Math.ceil(2 * Math.PI * part.radius * texelsPerUnit));
@@ -203,7 +257,7 @@ export function createPart(doc, type) {
 // 面の頂点は必ず「外から見て反時計回り」（法線が外を向く）の順で並べること。
 // 奇数サイズでは中心を整数格子に厳密には合わせられないため、下側を切り捨てて上側へ寄せる
 // （頂点座標を整数にすることを優先し、中心が最大0.5ずれるのは許容する）。
-export function convertBoxToMesh(part) {
+export function convertBoxToMesh(part, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
   if (part.type !== 'box') throw new Error(`「${part.name}」は箱ではないため、メッシュへ変換できません（現在は箱からの変換のみ対応しています）。`);
   const low = part.size.map(value => -Math.floor(value / 2));
   const high = part.size.map((value, axis) => value + low[axis]);
@@ -212,6 +266,9 @@ export function convertBoxToMesh(part) {
     [lx, ly, lz], [hx, ly, lz], [hx, hy, lz], [lx, hy, lz], // 0-3: z = lz（背面側）
     [lx, ly, hz], [hx, ly, hz], [hx, hy, hz], [lx, hy, hz], // 4-7: z = hz（正面側）
   ];
+  // faceNameOrderは下のfaces配列の並びと対応する。箱のUV名前付き領域→meshの面インデックスへ
+  // テクスチャ内容を写すための対応表として使う（面ごとの領域サイズは常に一致する）。
+  const faceNameOrder = ['front', 'back', 'up', 'down', 'right', 'left'];
   const faces = [
     [4, 5, 6, 7], // front (+Z)
     [1, 0, 3, 2], // back (-Z)
@@ -225,7 +282,111 @@ export function convertBoxToMesh(part) {
   next.type = 'mesh';
   next.vertices = vertices;
   next.faces = faces;
+  if (part.texture) {
+    // 面ごとの平面展開は箱の6面展開とアトラス全体の並べ方（詰め方）が異なるため、
+    // 見た目を保つには箱の名前付き領域からmeshの面インデックス領域へドットを転写し直す必要がある
+    // （各面の領域サイズ自体は一致するため、取りこぼしは発生しない）。
+    const boxLayout = textureLayout(part, texelsPerUnit);
+    const meshLayout = textureLayout(next, texelsPerUnit);
+    const [width, height] = meshLayout.size;
+    const grid = Array.from({ length: height }, () => Array(width).fill('.'));
+    faceNameOrder.forEach((name, faceIndex) => {
+      const [ox, oy, ow, oh] = boxLayout.faces[name];
+      const [nx, ny, nw, nh] = meshLayout.faces[faceIndex];
+      // 面ごとのU/V軸の取り方（最初の辺を基準にする）は面ごとに独立のため、同じ矩形でも
+      // 90度回転（幅と高さの入れ替わり）で配置されることがある。転写時はそれを検出して補正する。
+      const transposed = ow === nh && oh === nw && ow !== nw;
+      for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) {
+        const character = part.texture.rows[oy + y][ox + x];
+        if (transposed) grid[ny + x][nx + y] = character;
+        else if (x < nw && y < nh) grid[ny + y][nx + x] = character;
+      }
+    });
+    next.texture = { size: [width, height], rows: grid.map(row => row.join('')) };
+  }
   return next;
+}
+// 押し出しは常に面の法線に最も近い座標軸方向へスナップする。頂点は必ず整数のまま
+// （軸方向×整数distanceの加算のみ）にするため、面が完全な軸平行でなくても安全側に丸める。
+function axisSnappedNormal(normal) {
+  const magnitudes = normal.map(Math.abs);
+  const axis = magnitudes.indexOf(Math.max(...magnitudes));
+  const snapped = [0, 0, 0];
+  snapped[axis] = normal[axis] >= 0 ? 1 : -1;
+  return snapped;
+}
+// 面構成が変わったmeshのテクスチャを新しいUVアトラスへ引き継ぐ。
+// faceIndexMap: 新しい面インデックス→元の面インデックス（対応が無ければ未指定のまま'.'で埋める）。
+// 押し出しでは移動した面の footprint（投影サイズ）が変わらないため、対応する面は取りこぼしなく複写できる。
+function rebuildMeshTexture(oldPart, newPart, texelsPerUnit, faceIndexMap) {
+  const newLayout = meshFaceLayout(newPart, texelsPerUnit);
+  const [width, height] = newLayout.size;
+  if (!oldPart.texture) return { size: [width, height], rows: Array(height).fill('.'.repeat(width)), pixelsLost: false };
+  const oldLayout = meshFaceLayout(oldPart, texelsPerUnit);
+  const grid = Array.from({ length: height }, () => Array(width).fill('.'));
+  let pixelsLost = false;
+  const mappedOldIndices = new Set();
+  for (const [newIndex, oldIndex] of faceIndexMap) {
+    const oldRegion = oldLayout.faces[oldIndex], newRegion = newLayout.faces[newIndex];
+    if (!oldRegion || !newRegion) continue;
+    mappedOldIndices.add(oldIndex);
+    const [ox, oy, ow, oh] = oldRegion, [nx, ny, nw, nh] = newRegion;
+    const copyWidth = Math.min(ow, nw), copyHeight = Math.min(oh, nh);
+    for (let y = 0; y < copyHeight; y++) for (let x = 0; x < copyWidth; x++) {
+      grid[ny + y][nx + x] = oldPart.texture.rows[oy + y][ox + x];
+    }
+    for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) {
+      if ((x >= copyWidth || y >= copyHeight) && oldPart.texture.rows[oy + y][ox + x] !== '.') pixelsLost = true;
+    }
+  }
+  for (let oldIndex = 0; oldIndex < oldPart.faces.length; oldIndex++) {
+    if (mappedOldIndices.has(oldIndex)) continue;
+    const region = oldLayout.faces[oldIndex];
+    if (!region) continue;
+    const [x, y, w, h] = region;
+    outer: for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) {
+      if (oldPart.texture.rows[y + dy][x + dx] !== '.') { pixelsLost = true; break outer; }
+    }
+  }
+  return { size: [width, height], rows: grid.map(row => row.join('')), pixelsLost };
+}
+// 選択した面（複数可）をそれぞれの法線方向へ押し出す。各面は独立に処理する
+// （面同士が頂点を共有していても、押し出し後は別々の頂点として複製する）。
+// 元の面は同じ配列位置のまま新しい位置の面に置き換え、辺ごとに側面の四角形を追加する。
+export function extrudeMeshFace(part, faceIndices, distance, texelsPerUnit = DEFAULT_TEXELS_PER_UNIT) {
+  if (part.type !== 'mesh') throw new Error(`「${part.name}」はメッシュではないため、面を押し出せません。`);
+  if (!Number.isSafeInteger(distance)) throw new Error('押し出し距離は整数にしてください。');
+  const uniqueIndices = [...new Set(faceIndices)];
+  if (!uniqueIndices.length || !uniqueIndices.every(index => Number.isSafeInteger(index) && index >= 0 && index < part.faces.length)) {
+    throw new Error('押し出す面の指定が不正です。');
+  }
+  if (distance === 0) return { part: structuredClone(part), pixelsLost: false };
+  const sourceFaces = part.faces, sourceVertices = part.vertices, originalFaceCount = sourceFaces.length;
+  const vertices = structuredClone(sourceVertices), faces = structuredClone(sourceFaces);
+  for (const faceIndex of uniqueIndices) {
+    const face = sourceFaces[faceIndex];
+    const points = face.map(vertexIndex => sourceVertices[vertexIndex]);
+    const normal = axisSnappedNormal(flatNormal(points[0], points[1], points[2]));
+    const delta = normal.map(component => component * distance);
+    const newIndices = face.map(vertexIndex => {
+      vertices.push(sourceVertices[vertexIndex].map((coordinate, axis) => coordinate + delta[axis]));
+      return vertices.length - 1;
+    });
+    faces[faceIndex] = newIndices; // 元の面を新しい位置の面に置き換える（内部に残さない）
+    for (let i = 0; i < face.length; i++) {
+      const next = (i + 1) % face.length;
+      faces.push([face[i], face[next], newIndices[next], newIndices[i]]);
+    }
+  }
+  const next = structuredClone(part);
+  next.vertices = vertices;
+  next.faces = faces;
+  const faceIndexMap = new Map();
+  for (let index = 0; index < originalFaceCount; index++) faceIndexMap.set(index, index);
+  const { rows, size, pixelsLost } = rebuildMeshTexture(part, next, texelsPerUnit, faceIndexMap);
+  if (part.texture) next.texture = { size, rows };
+  else delete next.texture;
+  return { part: next, pixelsLost };
 }
 export function createBone(doc, parent = null) {
   let number = 1;

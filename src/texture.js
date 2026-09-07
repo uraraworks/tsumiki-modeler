@@ -10,6 +10,7 @@ export function applyAtlasUV(geometry, part, texelsPerUnit) {
   const position = geometry.getAttribute('position');
   const normal = geometry.getAttribute('normal');
   const oldUv = geometry.getAttribute('uv');
+  const faceIndices = geometry.userData?.meshFaceIndices;
   const values = new Float32Array(position.count * 2);
   const set = (index, region, x, y) => {
     const uv = atlasUv(region[0] + x, region[1] + y, atlasWidth, atlasHeight);
@@ -21,6 +22,7 @@ export function applyAtlasUV(geometry, part, texelsPerUnit) {
       [position.getX(index), position.getY(index), position.getZ(index)],
       [normal.getX(index), normal.getY(index), normal.getZ(index)],
       [oldUv.getX(index), oldUv.getY(index)], texelsPerUnit,
+      faceIndices ? faceIndices[index] : undefined,
     );
     // 未対応形状や不完全なレイアウトは既定UVを維持し、呼び出し側でテクスチャ無しにする。
     if (!mapped) return null;

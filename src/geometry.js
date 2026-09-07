@@ -1,4 +1,4 @@
-import { meshBounds } from './model.js';
+import { flatNormal, meshBounds } from './model.js';
 // 形状ごとの寸法参照を一箇所に集め、形状追加時の検査漏れを防ぐ。
 export function calculatePartBounds(part) {
   if (part.type === 'mesh') return meshBounds(part.vertices);
@@ -63,18 +63,13 @@ export function resizePreviewScale(part, dimensions = resizeDimensions(part)) {
   return [1, 1, 1];
 }
 
-// 平面な四角形/三角形の頂点列から面ごとのフラット法線を求める（3頂点で十分：面は平面である前提）。
-function flatNormal([x0, y0, z0], [x1, y1, z1], [x2, y2, z2]) {
-  const e1 = [x1 - x0, y1 - y0, z1 - z0], e2 = [x2 - x0, y2 - y0, z2 - z0];
-  const cross = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
-  const length = Math.hypot(...cross) || 1;
-  return cross.map(value => value / length);
-}
 // meshのBufferGeometryを構築する。曲面プリミティブと違い、法線は面ごとに独立させる
 // （スムーズシェーディングにしない）ため、頂点は面ごとに複製する。四角形は三角形2枚に分割する。
+// 各頂点がどの面（part.faces内インデックス）に属するかをuserData.meshFaceIndicesへ記録し、
+// 面ごとのUV展開（applyAtlasUV）とビューポートの面選択・押し出しの両方から参照できるようにする。
 function createMeshGeometry(part, THREE) {
-  const positions = [], normals = [], uvs = [];
-  for (const face of part.faces) {
+  const positions = [], normals = [], uvs = [], faceIndices = [];
+  part.faces.forEach((face, faceIndex) => {
     const points = face.map(index => part.vertices[index]);
     const normal = flatNormal(points[0], points[1], points[2]);
     const triangles = points.length === 3 ? [[0, 1, 2]] : [[0, 1, 2], [0, 2, 3]];
@@ -82,12 +77,14 @@ function createMeshGeometry(part, THREE) {
       positions.push(...points[cornerIndex]);
       normals.push(...normal);
       uvs.push(0, 0); // applyAtlasUVが位置・法線から実際のUVへ必ず上書きする。
+      faceIndices.push(faceIndex);
     }
-  }
+  });
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  (geometry.userData ??= {}).meshFaceIndices = faceIndices;
   return geometry;
 }
 // Three.jsを引数で受け取り、ブラウザとNodeテストの双方から形状生成を検査できるようにする。

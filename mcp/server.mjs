@@ -79,7 +79,9 @@ const COMMAND_DESCRIPTION = `コマンド配列を順番に既存applyCommandへ
 - {type:"assignPartBone", partId:string, boneId:string|null}
 - {type:"paintPixels", partId:string, pixels:[[x,y,"."またはパレット文字],...]}
 - {type:"convertToMesh", partId:string}
-  箱(box)パーツを頂点・面を直接持つmesh型へ変換します。現在は箱からの変換のみ対応（他の形状を指定するとエラー）。変換後のパーツはsizeを持たず、vertices:[[x,y,z],...]（整数座標、外から見て反時計回りの面）とfaces:[[i,j,k,l]または[i,j,k],...]（vertices内インデックス）を持ちます。UVは元の箱の6面展開をそのまま引き継ぐため見た目は変わりません。mesh型はaddPartでは作成できず、このコマンドでのみ生成されます。頂点・面自体の編集（押し出し等）は未対応です。
+  箱(box)パーツを頂点・面を直接持つmesh型へ変換します。現在は箱からの変換のみ対応（他の形状を指定するとエラー）。変換後のパーツはsizeを持たず、vertices:[[x,y,z],...]（整数座標、外から見て反時計回りの面）とfaces:[[i,j,k,l]または[i,j,k],...]（vertices内インデックス）を持ちます。UVは面ごとに平面展開するため、変換直後（全面が軸に平行な矩形）は元の箱の6面展開と同じ見た目になります。mesh型はaddPartでは作成できず、このコマンドでのみ生成されます。
+- {type:"extrudeFace", partId:string, faces:number[], distance:number}
+  meshパーツの指定した面（faces:part.faces内のインデックス配列、複数指定可、各面を個別にその法線方向へ押し出す）を、1グリッド単位でdistanceだけ法線方向へ押し出します。負のdistanceで内側へ凹ませられます。distance=0は何もしません（コマンドとして発行しても履歴に積まれません）。元の面は新しい位置の面に置き換わり、辺ごとに側面の四角形が追加されます（四角形1面につき頂点+4・面+4）。頂点は複製され、常に整数座標を保ちます。テクスチャは面の対応関係から可能な限り引き継ぎ、新しくできた側面・移動後の面のうち対応の無い部分は未指定（.）で埋まります。
 - {type:"addBone", bone:{id?,name?,parent?,position?,rotation?}}
   idは未指定時にb1,b2,...から空き番号を採番。name="ボーン N", parent=null, position=[0,0,0]（parent指定時は[0,2,0]）, rotation=[0,0,0]。
 - {type:"removeBone", boneId:string}

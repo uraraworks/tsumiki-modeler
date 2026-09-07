@@ -1,6 +1,6 @@
-import { meshBounds } from './model.js';
 // 面を外側から見たときの左上を各アトラス領域の左上へ合わせる。
-export function atlasPixelForVertex(part, layout, position, normal, originalUv, texelsPerUnit) {
+// faceIndexはmesh型のみ使用する（geometry.jsのuserData.meshFaceIndices経由で頂点ごとに渡される）。
+export function atlasPixelForVertex(part, layout, position, normal, originalUv, texelsPerUnit, faceIndex) {
   const [x, y, z] = position, [nx, ny, nz] = normal;
   const mapped = (face, map) => {
     const region = layout?.faces?.[face];
@@ -18,27 +18,16 @@ export function atlasPixelForVertex(part, layout, position, normal, originalUv, 
     return mapped('back', () => [(w / 2 - x) * texelsPerUnit, (h / 2 - y) * texelsPerUnit]);
   }
   if (part.type === 'mesh') {
-    // 各面をその法線に最も近い軸平面（XY/YZ/ZX）へ投影する。箱と同じ式を使うが、
-    // バウンディングボックスの中心・寸法から算出するので、箱から変換した直後は箱と同じ結果になる。
-    const { min, max } = meshBounds(part.vertices);
-    const [w, h, d] = [0, 1, 2].map(axis => max[axis] - min[axis]);
-    const [cx, cy, cz] = [0, 1, 2].map(axis => (max[axis] + min[axis]) / 2);
-    const [lx, ly, lz] = [x - cx, y - cy, z - cz];
-    const absNormal = [Math.abs(nx), Math.abs(ny), Math.abs(nz)];
-    const axis = absNormal.indexOf(Math.max(...absNormal));
-    if (axis === 0) {
-      return nx >= 0
-        ? mapped('right', () => [(d / 2 - lz) * texelsPerUnit, (h / 2 - ly) * texelsPerUnit])
-        : mapped('left', () => [(lz + d / 2) * texelsPerUnit, (h / 2 - ly) * texelsPerUnit]);
-    }
-    if (axis === 1) {
-      return ny >= 0
-        ? mapped('up', () => [(lx + w / 2) * texelsPerUnit, (lz + d / 2) * texelsPerUnit])
-        : mapped('down', () => [(lx + w / 2) * texelsPerUnit, (d / 2 - lz) * texelsPerUnit]);
-    }
-    return nz >= 0
-      ? mapped('front', () => [(lx + w / 2) * texelsPerUnit, (h / 2 - ly) * texelsPerUnit])
-      : mapped('back', () => [(w / 2 - lx) * texelsPerUnit, (h / 2 - ly) * texelsPerUnit]);
+    // 面ごとの平面展開（meshFaceLayoutのprojections）を使う。軸平面への投影と違い、
+    // 面自身の辺を基準にしたU/V軸で測るため、斜めの面でもテクセルが歪まない。
+    if (faceIndex === undefined || faceIndex === null) return null;
+    const projection = layout.projections?.[faceIndex];
+    if (!projection) return null;
+    const [ox, oy, oz] = projection.origin;
+    const d = [x - ox, y - oy, z - oz];
+    const localU = (d[0] * projection.u[0] + d[1] * projection.u[1] + d[2] * projection.u[2]) - projection.minU;
+    const localV = (d[0] * projection.v[0] + d[1] * projection.v[1] + d[2] * projection.v[2]) - projection.minV;
+    return mapped(String(faceIndex), () => [localU * texelsPerUnit, localV * texelsPerUnit]);
   }
   if (part.type === 'sphere' || part.type === 'capsule') {
     return mapped('surface', region => [originalUv[0] * region[2], (1 - originalUv[1]) * region[3]]);
