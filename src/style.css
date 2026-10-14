@@ -229,3 +229,9 @@ footer.app-footer a { color: var(--page-footer-text); }
   header.app-header { padding: 6px 10px; }
   header.app-header .app-tagline { display: none; }
 }
+
+.unit-tools { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.unit-tools label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.solid-palette { display: flex; flex-wrap: wrap; gap: 3px; margin: 2px 0 8px; }
+.solid-palette button { width: 20px; height: 20px; padding: 0; border: 1px solid #5b6875; border-radius: 3px; cursor: pointer; }
+.solid-palette button[aria-pressed=true] { outline: 2px solid #f0bf78; outline-offset: 1px; }

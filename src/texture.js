@@ -66,5 +66,6 @@ export function updatePartCanvasTexturePixel(texture, part, palette, x, y, chara
 }
 
 export function textureSignature(part, palette) {
-  return part.texture ? JSON.stringify([part.texture, part.color, palette]) : null;
+  // 単色モード（colorMode: 'solid'）のパーツはテクスチャを使わず、パーツ色のベタ塗りで描く。
+  return part.texture && part.colorMode !== 'solid' ? JSON.stringify([part.texture, part.color, palette]) : null;
 }

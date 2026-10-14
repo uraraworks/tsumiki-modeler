@@ -6,3 +6,4 @@ mcp/dist/
 
 # 試作したモデルデータ（リポジトリには含めない）
 models/
+node_modules/

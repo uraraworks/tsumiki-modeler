@@ -18,7 +18,8 @@ function withCommandDefaults(doc, cmd) {
           : part.type === 'cylinder' ? positiveIntegers([part.radius, part.height]) && validCylinderRadii
             : part.type === 'capsule' && positiveIntegers([part.radius, part.height]);
       // 不正な寸法はテクスチャ生成で先に失敗させず、validateDocの具体的な検証理由へ回す。
-      if (textureDimensionsAreValid) part.texture = createBlankTexture(part, doc.texelsPerUnit);
+      // 単色指定のパーツはテクスチャを持たせない（ペイントしたくなった時点で自動生成される）。
+      if (textureDimensionsAreValid && supplied.colorMode !== 'solid') part.texture = createBlankTexture(part, doc.texelsPerUnit);
     }
     return { ...cmd, part };
   }
@@ -39,6 +40,16 @@ export function applyCommand(doc, cmd) {
   else if (cmd.type === 'addAnimation') {
     if (!Array.isArray(next.animations)) next.animations = [];
     next.animations.push(cloneDoc(cmd.animation));
+  }
+  else if (cmd.type === 'setUnit') {
+    // 1単位が何cmか。null/未指定で換算なしに戻す。
+    if (cmd.unitCm === null || cmd.unitCm === undefined) delete next.unitCm;
+    else next.unitCm = cmd.unitCm;
+  }
+  else if (cmd.type === 'setGrid') {
+    // 移動・リサイズのスナップ刻み（単位数）。座標は常に整数のまま。
+    if (!Number.isSafeInteger(cmd.grid)) throw new Error('gridは1以上の整数にしてください。');
+    next.grid = cmd.grid;
   }
   else if (cmd.type === 'mergeParts') {
     if (!Array.isArray(cmd.partIds) || cmd.partIds.length < 2) throw new Error('結合するパーツを2つ以上指定してください。');
@@ -111,6 +122,12 @@ export function applyCommand(doc, cmd) {
         if (positiveDimensions && cylinderRadii) resizePartTexture(part, next.texelsPerUnit);
         break;
       case 'setColor': part.color = cmd.color; break;
+      case 'setColorMode':
+        if (!['solid', 'texture'].includes(cmd.mode)) throw new Error('modeは"solid"か"texture"にしてください。');
+        part.colorMode = cmd.mode;
+        break;
+      // 色を指定して単色モードにする（パレット外の任意の#RRGGBBも可）。
+      case 'setSolidColor': part.color = cmd.color; part.colorMode = 'solid'; break;
       case 'rename': part.name = cmd.name; break;
       case 'convertToMesh': next.parts[index] = convertPartToMesh(part, next.texelsPerUnit).part; break;
       case 'weldVertices': {
@@ -156,6 +173,8 @@ export function applyCommand(doc, cmd) {
           if (texture.rows[y][x] !== character) changes.push([x, y, character]);
         }
         if (!changes.length) break;
+        // 単色モードのパーツへ描いたら、描いた内容が見えるようテクスチャモードへ戻す。
+        if (part.colorMode === 'solid') part.colorMode = 'texture';
         if (!part.texture) part.texture = texture;
         for (const [x, y, character] of changes) {
           part.texture.rows[y] = `${part.texture.rows[y].slice(0, x)}${character}${part.texture.rows[y].slice(x + 1)}`;

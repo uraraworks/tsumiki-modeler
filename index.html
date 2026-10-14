@@ -41,6 +41,10 @@
           <label title="手前と奥の境界を検出する相対深度差">深度<input id="outline-depth" type="range" min="0" max="0.15" step="0.005" value="0.06"><output id="outline-depth-value">0.060</output></label>
           <label title="折れ曲がりを検出する法線差">法線<input id="outline-normal" type="range" min="0" max="1" step="0.01" value="0.2"><output id="outline-normal-value">0.20</output></label>
         </div>
+        <div class="outline-switch" id="render-style-switch" role="group" aria-label="表示方式" title="ドット：384x216固定の整数倍表示／なめらか：ウィンドウ解像度でアンチエイリアス付き（トゥーンと輪郭線は共通）">
+          <button type="button" data-render-style="pixel" aria-pressed="true">ドット</button>
+          <button type="button" data-render-style="smooth" aria-pressed="false">なめらか</button>
+        </div>
         <span id="resolution">384 × 216</span>
       </div>
       <div id="viewport"><div id="canvas-host"></div></div>
@@ -71,7 +75,13 @@
         <span class="divider"></span>
         <button id="add-box" class="primary">＋ 箱を追加</button><button id="add-cylinder">＋ 円柱を追加</button><label class="add-primitive">曲面<select id="add-primitive-type" aria-label="追加する曲面"><option value="frustum">円錐台</option><option value="sphere">球</option><option value="capsule">カプセル</option></select></label><button id="add-primitive">＋ 追加</button><button id="duplicate" disabled>複製</button><button id="mirror" disabled>左右ミラー</button><button id="convert-to-mesh" disabled>メッシュに変換</button><button id="merge-parts" disabled title="パーツ一覧でCtrl/Cmd+クリックまたはShift+クリックすると2つ以上選択できます">結合</button><button id="delete">削除</button>
         <span class="divider"></span><button id="undo">元に戻す</button><button id="redo">やり直す</button>
-        <span class="divider"></span><button id="save">JSON保存</button><button id="load">JSON読込</button>
+        <span class="divider"></span><button id="save">JSON保存</button><button id="load">JSON読込</button><button id="export-glb" title="全パーツをワールド座標で書き出します。単色パーツは頂点カラー(COLOR_0)、ドットを描いたパーツはテクスチャ付き。「1単位＝何cm」を入れるとメートル単位になります">glTF書出 (.glb)</button>
+        <span class="divider"></span>
+        <span class="unit-tools" aria-label="寸法の単位">
+          <label title="1単位が実寸で何cmか。空欄は換算なし。表示とglTF書き出しの換算に使い、形状は整数グリッドのままです">1単位＝<input id="unit-cm" type="number" step="any" min="0.001" placeholder="cm" style="width:4.8em">cm</label>
+          <label title="移動・リサイズのスナップ刻み（単位数）">刻み<select id="grid-step" aria-label="スナップ刻み"><option value="1">1</option><option value="2">2</option><option value="5">5</option><option value="10">10</option></select></label>
+          <span id="extent-info" class="toolbar-label"></span>
+        </span>
         <span class="divider"></span><span class="toolbar-label">サンプル</span><div class="sample-switch" role="group" aria-label="新規作成とサンプル"><button id="sample-new" type="button" aria-pressed="false">新規</button><button id="sample-human" type="button" aria-pressed="true">人型</button><button id="sample-chest" type="button" aria-pressed="false">宝箱</button><button id="sample-teapot" type="button" aria-pressed="false">ティーポット</button></div>
       </nav>
       <p id="status" role="status" aria-live="polite">パーツを選んで、つくりはじめましょう。</p>
@@ -105,8 +115,10 @@
             <button id="weld-vertices" type="button" title="距離がしきい値以下の頂点を1つに統合します。面が本当に繋がるためボーンで曲げても割れなくなりますが、統合した範囲は1つの塊として一緒に動きます">溶接</button>
           </fieldset>
           <fieldset><legend>回転（度）</legend><div class="triple"><label>X<input type="number" step="1" required data-vector="rotation" data-axis="0"></label><label>Y<input type="number" step="1" required data-vector="rotation" data-axis="1"></label><label>Z<input type="number" step="1" required data-vector="rotation" data-axis="2"></label></div></fieldset>
-          <label>パーツ色<div class="color-row"><input id="part-color" type="color"><output id="color-value"></output></div></label>
-          <section class="paint-section" aria-labelledby="paint-title"><h3 id="paint-title">ドット描画</h3>
+          <label>塗り方<select id="part-color-mode"><option value="texture">テクスチャ（ドット）</option><option value="solid">単色（ベタ塗り）</option></select></label>
+          <label>パーツ色<div class="color-row"><input id="part-color" type="color"><input id="part-color-hex" type="text" maxlength="7" pattern="#[0-9a-fA-F]{6}" spellcheck="false" aria-label="パーツ色の#RRGGBB" style="width:6.5em"></div></label>
+          <div id="solid-palette" class="solid-palette" role="group" aria-label="パレットから単色にする"></div>
+          <section class="paint-section" aria-labelledby="paint-title"><h3 id="paint-title">ドット描画</h3><p class="paint-note">単色モードのパーツに描くと、自動でテクスチャモードになります</p>
             <div class="paint-tools" role="group" aria-label="描画ツール"><button id="paint-pen" type="button" aria-pressed="true">ペン</button><button id="paint-eraser" type="button" aria-pressed="false">消しゴム</button><button id="paint-eyedropper" type="button" aria-pressed="false">スポイト</button></div>
             <div class="current-paint"><span id="paint-color" aria-hidden="true"></span><span>現在色</span><output id="paint-color-value"></output></div>
             <div id="palette" aria-label="描画カラーパレット"></div><p class="paint-note">右クリック／Alt＋クリック：一時スポイト</p>

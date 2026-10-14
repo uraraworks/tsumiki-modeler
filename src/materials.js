@@ -66,6 +66,8 @@ export function createEdgeCompositeMaterial(colorTexture, normalTexture, depthTe
       normalTexture: { value: normalTexture },
       depthTexture: { value: depthTexture },
       texelSize: { value: new THREE.Vector2(1 / 384, 1 / 216) },
+      // 線の太さ（レンダーターゲット上のピクセル数）。ドット表示は1、なめらか表示は解像度に応じて増やす。
+      lineWidth: { value: 1 },
       cameraNear: { value: 0.1 },
       cameraFar: { value: 100000 },
       depthThreshold: { value: 0.06 },
@@ -84,6 +86,7 @@ export function createEdgeCompositeMaterial(colorTexture, normalTexture, depthTe
       uniform sampler2D normalTexture;
       uniform sampler2D depthTexture;
       uniform vec2 texelSize;
+      uniform float lineWidth;
       uniform float cameraNear;
       uniform float cameraFar;
       uniform float depthThreshold;
@@ -111,16 +114,40 @@ export function createEdgeCompositeMaterial(colorTexture, normalTexture, depthTe
           || 1.0 - dot(centerNormal, neighborNormal) > normalThreshold;
       }
       void main() {
-        vec2 leftUv = max(vUv - vec2(texelSize.x, 0.0), vec2(0.0));
-        vec2 upUv = max(vUv - vec2(0.0, texelSize.y), vec2(0.0));
-        vec2 rightUv = min(vUv + vec2(texelSize.x, 0.0), vec2(1.0));
-        vec2 downUv = min(vUv + vec2(0.0, texelSize.y), vec2(1.0));
+        vec2 stepUv = texelSize * lineWidth;
+        vec2 leftUv = max(vUv - vec2(stepUv.x, 0.0), vec2(0.0));
+        vec2 upUv = max(vUv - vec2(0.0, stepUv.y), vec2(0.0));
+        vec2 rightUv = min(vUv + vec2(stepUv.x, 0.0), vec2(1.0));
+        vec2 downUv = min(vUv + vec2(0.0, stepUv.y), vec2(1.0));
         bool centerOccupied = occupied(vUv);
         bool silhouette = centerOccupied && (!occupied(leftUv) || !occupied(upUv) || !occupied(rightUv) || !occupied(downUv));
         // 左・上との差だけを採用し、境界の両側へ線が出て2px幅になるのを防ぐ。
         bool edge = silhouette || internalEdge(vUv, leftUv) || internalEdge(vUv, upUv);
         vec4 color = texture2D(colorTexture, vUv);
         gl_FragColor = edge ? vec4(edgeColor, 1.0) : color;
+        #include <colorspace_fragment>
+      }`,
+    depthTest: false,
+    depthWrite: false,
+  });
+}
+
+// 高解像度（スーパーサンプリング）で描いた結果を、キャンバス解像度へ線形補間で縮小して表示する。
+// 2倍で描いて半分に縮める場合、サンプル点がちょうど画素の境目に来るため、2x2の平均になる（アンチエイリアス）。
+export function createBlitMaterial(texture) {
+  return new THREE.ShaderMaterial({
+    uniforms: { source: { value: texture } },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }`,
+    fragmentShader: `
+      uniform sampler2D source;
+      varying vec2 vUv;
+      void main() {
+        gl_FragColor = vec4(texture2D(source, vUv).rgb, 1.0);
         #include <colorspace_fragment>
       }`,
     depthTest: false,

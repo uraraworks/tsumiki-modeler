@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createToonMaterial, createOutlineMaterial, createEdgeCompositeMaterial } from './materials.js';
+import { createToonMaterial, createOutlineMaterial, createEdgeCompositeMaterial, createBlitMaterial } from './materials.js';
 import { createBlankTexture, textureLayout } from './model.js';
 import { applyAtlasUV, createPartCanvasTexture, textureSignature, updatePartCanvasTexturePixel } from './texture.js';
 import { createPartGeometry, resizeDimensions, resizeHandleLayout, resizePreviewScale } from './geometry.js';
@@ -19,7 +19,8 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   host.append(renderer.domElement);
   const modelLayer = 1;
   const colorTarget = new THREE.WebGLRenderTarget(384, 216, {
-    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+    // 色は画素中心でしか読まない（エッジ合成）ため線形でも同じ。なめらか表示で縮小するときだけ効く。
+    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
     depthBuffer: true, stencilBuffer: false,
   });
   const normalTarget = new THREE.WebGLRenderTarget(384, 216, {
@@ -35,6 +36,13 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const compositeScene = new THREE.Scene();
   const compositeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   compositeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), edgeMaterial));
+  // なめらか表示：スーパーサンプリングで描いた結果（エッジ合成後）を縮小してキャンバスへ出す。
+  const composeTarget = new THREE.WebGLRenderTarget(384, 216, {
+    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, stencilBuffer: false,
+  });
+  const blitMaterial = createBlitMaterial(composeTarget.texture);
+  const blitScene = new THREE.Scene();
+  blitScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blitMaterial));
   renderer.domElement.setAttribute('aria-label', '3Dモデル。ドラッグで回転、クリックでパーツを選択');
   const activePointerIds = new Set(), endingPointerIds = new Set(), cancellingPointerIds = new Set();
   renderer.domElement.addEventListener('pointerdown', event => activePointerIds.add(event.pointerId), true);
@@ -65,10 +73,47 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   let outlineMode = 'edge';
   const textureCache = new Map();
   const clearColor = new THREE.Color();
+  // 描画方式。'pixel'＝384x216固定（従来）、'smooth'＝ウィンドウ解像度＋2倍スーパーサンプリングのアンチエイリアス。
+  let renderStyle = 'pixel';
+  let logicalHeight = 216; // 面ハンドルなどを一定の見かけ寸法にするための基準高さ（ドット表示は216、なめらか表示はCSS上の高さ）
+  const SMOOTH_SUPERSAMPLE_LIMIT = 5_000_000;
+  const MAX_RENDER_SIDE = 4096;
+  // 出力画素数 width x height で描くための設定をまとめて適用する。
+  function applyRenderSize(width, height, supersample, lineWidth) {
+    const targetWidth = width * supersample, targetHeight = height * supersample;
+    renderer.setSize(width, height, false);
+    for (const target of [colorTarget, normalTarget, composeTarget]) target.setSize(targetWidth, targetHeight);
+    normalTarget.depthTexture.image.width = targetWidth; normalTarget.depthTexture.image.height = targetHeight;
+    edgeMaterial.uniforms.texelSize.value.set(1 / targetWidth, 1 / targetHeight);
+    edgeMaterial.uniforms.lineWidth.value = lineWidth;
+    camera.aspect = width / height; camera.updateProjectionMatrix();
+    outlineResolution.set(targetWidth / lineWidth, targetHeight / lineWidth);
+    updateOutlineResolution();
+  }
+  const outlineResolution = new THREE.Vector2(384, 216);
+  function updateOutlineResolution() {
+    for (const outline of outlineMeshes) outline.material.uniforms.resolution.value.copy(outlineResolution);
+  }
+  // なめらか表示の設定。出力高さに応じて輪郭線を1〜2px相当にする。
+  function smoothSettings(width, height) {
+    const supersample = width * height <= SMOOTH_SUPERSAMPLE_LIMIT ? 2 : 1;
+    const thickness = THREE.MathUtils.clamp(height / 540, 1, 2);
+    return { supersample, lineWidth: Math.max(1, Math.round(supersample * thickness)) };
+  }
   function renderScene(activeCamera) {
+    const smooth = renderStyle === 'smooth';
     if (outlineMode !== 'edge') {
-      renderer.setRenderTarget(null);
+      if (!smooth) {
+        renderer.setRenderTarget(null);
+        renderer.render(scene, activeCamera);
+        return;
+      }
+      renderer.setRenderTarget(colorTarget);
+      renderer.clear();
       renderer.render(scene, activeCamera);
+      blitMaterial.uniforms.source.value = colorTarget.texture;
+      renderer.setRenderTarget(null);
+      renderer.render(blitScene, compositeCamera);
       return;
     }
     const oldLayerMask = activeCamera.layers.mask;
@@ -92,8 +137,17 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
 
       edgeMaterial.uniforms.cameraNear.value = activeCamera.near;
       edgeMaterial.uniforms.cameraFar.value = activeCamera.far;
-      renderer.setRenderTarget(null);
-      renderer.render(compositeScene, compositeCamera);
+      if (smooth) {
+        renderer.setRenderTarget(composeTarget);
+        renderer.clear();
+        renderer.render(compositeScene, compositeCamera);
+        blitMaterial.uniforms.source.value = composeTarget.texture;
+        renderer.setRenderTarget(null);
+        renderer.render(blitScene, compositeCamera);
+      } else {
+        renderer.setRenderTarget(null);
+        renderer.render(compositeScene, compositeCamera);
+      }
     } finally {
       activeCamera.layers.mask = oldLayerMask;
       scene.overrideMaterial = oldOverrideMaterial;
@@ -111,7 +165,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     // 内部解像度上で約6pxに見えるワールド寸法へ毎フレーム換算する。
     for (const handle of resizeHandles) {
       handle.getWorldPosition(handleWorldPosition);
-      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 6 / 216;
+      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 6 / logicalHeight;
       handle.scale.setScalar(worldSize);
     }
     // 頂点マーカーも面ハンドルと同様、384x216上で常に一定の見かけサイズになるよう毎フレーム換算する。
@@ -119,12 +173,12 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     // （実際に見える点は6px相当。掴みやすさと見た目のバランスを取るため、当たり判定を広めに取る）。
     for (const marker of vertexMarkers) {
       marker.getWorldPosition(handleWorldPosition);
-      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 10 / 216;
+      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 10 / logicalHeight;
       marker.scale.setScalar(worldSize);
     }
     for (const marker of boneVisuals.filter(object => object.userData.boneMarker)) {
       marker.getWorldPosition(handleWorldPosition);
-      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 7 / 216;
+      const worldSize = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.position.distanceTo(handleWorldPosition) * 7 / logicalHeight;
       marker.scale.setScalar(worldSize);
     }
     renderScene(camera);
@@ -133,7 +187,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   const transformControls = new TransformControls(camera, renderer.domElement);
   const transformHelper = transformControls.getHelper();
   transformControls.setMode('translate');
-  transformControls.setTranslationSnap(1);
+  transformControls.setTranslationSnap(1); // 移動の刻み（単位数）。rebuildでdoc.gridへ合わせる
   transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
   transformControls.addEventListener('change', render);
   const normalizeDegrees = radians => ((Math.round(THREE.MathUtils.radToDeg(radians)) % 360) + 360) % 360;
@@ -409,7 +463,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
     const activePartIds = new Set(doc.parts.map(part => part.id));
     for (const [partId, cached] of textureCache) if (!activePartIds.has(partId)) { cached.texture.dispose(); textureCache.delete(partId); }
     currentDoc = doc;
-    scene = new THREE.Scene(); pickable = []; outlineMeshes = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid; faceHighlightMesh = null; faceHoverMesh = null; hoveredFaceIndex = null; vertexMarkers = []; vertexMarkerMaterials = null; vertexTransformProxy = null; hoveredVertexIndex = null;
+    scene = new THREE.Scene(); pickable = []; outlineMeshes = []; bonePickable = []; boneVisuals = []; boneObjects = new Map(); resizeHandles = []; handleGroup = null; selectedMesh = null; selectedPart = null; selectedBoneObject = null; partTransformProxy = null; currentGrid = doc.grid; transformControls.setTranslationSnap(doc.grid); faceHighlightMesh = null; faceHoverMesh = null; hoveredFaceIndex = null; vertexMarkers = []; vertexMarkerMaterials = null; vertexTransformProxy = null; hoveredVertexIndex = null;
     const light = new THREE.DirectionalLight('#ffffff', 1);
     light.position.set(-3, 8, 5);
     const ambient = new THREE.AmbientLight('#ffffff', 0.18);
@@ -467,6 +521,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       // 複数選択時（selectedIds指定時）は該当パーツすべてを、単一選択時はselectedIdのみをアウトラインで示す。
       const isOutlined = selectedIds ? selectedIds.includes(part.id) : part.id === selectedId;
       const outline = new THREE.Mesh(geometry, createOutlineMaterial(isOutlined));
+      outline.material.uniforms.resolution.value.copy(outlineResolution);
       outline.userData = { partId: part.id, selected: isOutlined };
       mesh.add(outline); outlineMeshes.push(outline); (part.bone ? boneObjects.get(part.bone) : scene).add(mesh); pickable.push(mesh);
       if (part.id === selectedId) { selectedMesh = mesh; selectedPart = part; }
@@ -492,9 +547,25 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
   }
   let displayScale = 0;
   const resize = () => {
+    if (renderStyle === 'smooth') {
+      const cssWidth = Math.max(1, container.clientWidth), cssHeight = Math.max(1, container.clientHeight);
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.min(MAX_RENDER_SIDE, Math.round(cssWidth * ratio)), height = Math.min(MAX_RENDER_SIDE, Math.round(cssHeight * ratio));
+      const { supersample, lineWidth } = smoothSettings(width, height);
+      applyRenderSize(width, height, supersample, lineWidth);
+      logicalHeight = cssHeight;
+      renderer.domElement.style.width = `${cssWidth}px`;
+      renderer.domElement.style.height = `${cssHeight}px`;
+      renderer.domElement.style.imageRendering = 'auto';
+      document.querySelector('#resolution').textContent = `${width} × ${height} · なめらか`;
+      displayScale = 0;
+      render();
+      return;
+    }
     const scale = Math.max(1, Math.floor(Math.min(container.clientWidth / 384, container.clientHeight / 216)));
     document.querySelector('#resolution').textContent = `384 × 216 · ${scale}倍`;
     if (scale !== displayScale) {
+      if (displayScale === 0) { applyRenderSize(384, 216, 1, 1); logicalHeight = 216; renderer.domElement.style.imageRendering = ''; }
       displayScale = scale;
       renderer.domElement.style.width = `${384 * displayScale}px`;
       renderer.domElement.style.height = `${216 * displayScale}px`;
@@ -946,7 +1017,28 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
       const gridVisible = gridHelper.visible;
       const handlesVisible = handleGroup?.visible;
       const boneVisibility = boneVisuals.map(object => object.visible);
+      // 「モデルだけ」を撮るため、選択中パーツの黄色い輪郭は隠す（逆押し出し方式では輪郭自体が見た目の一部なので残す）。
+      const outlineVisibility = outlineMeshes.map(outline => outline.visible);
+      if (outlineMode !== 'inverted') for (const outline of outlineMeshes) if (outline.userData.selected) outline.visible = false;
+      // 出力解像度と描画方式。既定は従来どおり384x216のドット表示。
+      const previewStyle = cameraOptions.style ?? 'pixel';
+      if (!['pixel', 'smooth'].includes(previewStyle)) throw new Error('styleは"pixel"か"smooth"にしてください。');
+      const requestedWidth = cameraOptions.width ?? 384, requestedHeight = cameraOptions.height ?? 216;
+      if (![requestedWidth, requestedHeight].every(value => Number.isSafeInteger(value) && value >= 16 && value <= MAX_RENDER_SIDE)) {
+        throw new Error(`解像度は16〜${MAX_RENDER_SIDE}の整数で指定してください。`);
+      }
+      if (requestedWidth * requestedHeight > 16_000_000) throw new Error('解像度が大きすぎます（合計1600万画素まで）。');
+      // ドット表示は384x216で描き、整数倍にニアレストで拡大する（端数は切り捨て）。
+      const pixelScale = Math.max(1, Math.floor(Math.min(requestedWidth / 384, requestedHeight / 216)));
+      const outWidth = previewStyle === 'smooth' ? requestedWidth : 384 * pixelScale;
+      const outHeight = previewStyle === 'smooth' ? requestedHeight : 216 * pixelScale;
+      const savedStyle = renderStyle;
       try {
+        renderStyle = previewStyle;
+        if (previewStyle === 'smooth') {
+          const { supersample, lineWidth } = smoothSettings(outWidth, outHeight);
+          applyRenderSize(outWidth, outHeight, supersample, lineWidth);
+        } else applyRenderSize(384, 216, 1, 1);
         if (previewDoc) for (const bone of previewDoc.bones) {
           const object = boneObjects.get(bone.id);
           if (object) object.rotation.set(...bone.rotation.map(THREE.MathUtils.degToRad));
@@ -967,7 +1059,7 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
           Math.sin(elevation),
           Math.cos(azimuth) * Math.cos(elevation),
         );
-        const previewCamera = new THREE.PerspectiveCamera(camera.fov, 384 / 216, camera.near, camera.far);
+        const previewCamera = new THREE.PerspectiveCamera(camera.fov, outWidth / outHeight, camera.near, camera.far);
         previewCamera.layers.enable(modelLayer);
         if (Math.abs(direction.y) > .9999) previewCamera.up.set(0, 0, direction.y > 0 ? -1 : 1);
         previewCamera.position.copy(target).add(direction);
@@ -996,8 +1088,20 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         if (handleGroup) handleGroup.visible = false;
         boneVisuals.forEach(object => { object.visible = false; });
         renderScene(previewCamera);
-        return renderer.domElement.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+        let source = renderer.domElement;
+        if (previewStyle === 'pixel' && pixelScale > 1) {
+          source = document.createElement('canvas');
+          source.width = outWidth; source.height = outHeight;
+          const context = source.getContext('2d');
+          context.imageSmoothingEnabled = false;
+          context.drawImage(renderer.domElement, 0, 0, outWidth, outHeight);
+        }
+        return { base64: source.toDataURL('image/png').replace(/^data:image\/png;base64,/, ''), width: outWidth, height: outHeight, style: previewStyle };
       } finally {
+        renderStyle = savedStyle;
+        outlineMeshes.forEach((outline, index) => { outline.visible = outlineVisibility[index]; });
+        // 編集画面の描画サイズへ戻す。
+        displayScale = 0; resize();
         for (const [id, rotation] of oldRotations) boneObjects.get(id)?.rotation.copy(rotation);
         transformHelper.visible = helperVisible;
         gridHelper.visible = gridVisible;
@@ -1006,6 +1110,14 @@ export function createViewport(container, host, onSelect, onTransformCommit, onT
         render();
       }
     },
+    // 'pixel'（384x216・ドット）と'smooth'（ウィンドウ解像度・アンチエイリアス）を切り替える。
+    setRenderStyle(style) {
+      if (!['pixel', 'smooth'].includes(style) || style === renderStyle) return;
+      renderStyle = style;
+      displayScale = 0;
+      resize();
+    },
+    getRenderStyle: () => renderStyle,
     setOutlineSettings(settings = {}) {
       if (['edge', 'inverted', 'none'].includes(settings.mode)) outlineMode = settings.mode;
       if (Number.isFinite(settings.depthThreshold)) edgeMaterial.uniforms.depthThreshold.value = THREE.MathUtils.clamp(settings.depthThreshold, 0, 1);

@@ -1,0 +1,2591 @@
+{
+  "version": 1,
+  "name": "トマトの株",
+  "grid": 1,
+  "texelsPerUnit": 1,
+  "palette": [
+    "#c9a45c",
+    "#e8e2d0",
+    "#6b4a2f",
+    "#5c8f3d",
+    "#3f7d34",
+    "#4f9440",
+    "#d63a2f",
+    "#8fb84a"
+  ],
+  "parts": [
+    {
+      "id": "p1",
+      "name": "土",
+      "type": "cylinder",
+      "position": [
+        0,
+        2,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 12,
+      "height": 4,
+      "segments": 12,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#6b4a2f",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 8,
+      "radiusBottom": 12
+    },
+    {
+      "id": "p2",
+      "name": "支柱",
+      "type": "cylinder",
+      "position": [
+        -7,
+        62,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 1,
+      "height": 124,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#c9a45c",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 1
+    },
+    {
+      "id": "p3",
+      "name": "茎",
+      "type": "cylinder",
+      "position": [
+        0,
+        55,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 110,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p4",
+      "name": "ひも1",
+      "type": "box",
+      "position": [
+        -3,
+        28,
+        0
+      ],
+      "size": [
+        8,
+        1,
+        3
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#e8e2d0",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p5",
+      "name": "ひも2",
+      "type": "box",
+      "position": [
+        -3,
+        60,
+        0
+      ],
+      "size": [
+        8,
+        1,
+        3
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#e8e2d0",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p6",
+      "name": "ひも3",
+      "type": "box",
+      "position": [
+        -3,
+        92,
+        0
+      ],
+      "size": [
+        8,
+        1,
+        3
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#e8e2d0",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p7",
+      "name": "葉1(右)_葉柄",
+      "type": "box",
+      "position": [
+        8,
+        22,
+        0
+      ],
+      "size": [
+        16,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p8",
+      "name": "葉1(右)_先端の小葉",
+      "type": "box",
+      "position": [
+        22,
+        25,
+        0
+      ],
+      "size": [
+        14,
+        1,
+        10
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p9",
+      "name": "葉1(右)_側小葉1",
+      "type": "box",
+      "position": [
+        10,
+        22,
+        -7
+      ],
+      "size": [
+        9,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p10",
+      "name": "葉1(右)_側小葉2",
+      "type": "box",
+      "position": [
+        10,
+        22,
+        7
+      ],
+      "size": [
+        9,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p11",
+      "name": "葉1(左)_葉柄",
+      "type": "box",
+      "position": [
+        -8,
+        22,
+        0
+      ],
+      "size": [
+        16,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p12",
+      "name": "葉1(左)_先端の小葉",
+      "type": "box",
+      "position": [
+        -22,
+        25,
+        0
+      ],
+      "size": [
+        14,
+        1,
+        10
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p13",
+      "name": "葉1(左)_側小葉1",
+      "type": "box",
+      "position": [
+        -10,
+        22,
+        -7
+      ],
+      "size": [
+        9,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p14",
+      "name": "葉1(左)_側小葉2",
+      "type": "box",
+      "position": [
+        -10,
+        22,
+        7
+      ],
+      "size": [
+        9,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p15",
+      "name": "葉2(手前)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        34,
+        8
+      ],
+      "size": [
+        1,
+        1,
+        15
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p16",
+      "name": "葉2(手前)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        36,
+        21
+      ],
+      "size": [
+        10,
+        1,
+        13
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p17",
+      "name": "葉2(手前)_側小葉1",
+      "type": "box",
+      "position": [
+        -7,
+        34,
+        9
+      ],
+      "size": [
+        6,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p18",
+      "name": "葉2(手前)_側小葉2",
+      "type": "box",
+      "position": [
+        7,
+        34,
+        9
+      ],
+      "size": [
+        6,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p19",
+      "name": "葉2(奥)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        34,
+        -7
+      ],
+      "size": [
+        1,
+        1,
+        15
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p20",
+      "name": "葉2(奥)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        36,
+        -20
+      ],
+      "size": [
+        10,
+        1,
+        13
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p21",
+      "name": "葉2(奥)_側小葉1",
+      "type": "box",
+      "position": [
+        -7,
+        34,
+        -9
+      ],
+      "size": [
+        6,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p22",
+      "name": "葉2(奥)_側小葉2",
+      "type": "box",
+      "position": [
+        7,
+        34,
+        -9
+      ],
+      "size": [
+        6,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p23",
+      "name": "葉3(右)_葉柄",
+      "type": "box",
+      "position": [
+        7,
+        45,
+        0
+      ],
+      "size": [
+        14,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p24",
+      "name": "葉3(右)_先端の小葉",
+      "type": "box",
+      "position": [
+        20,
+        48,
+        0
+      ],
+      "size": [
+        13,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p25",
+      "name": "葉3(右)_側小葉1",
+      "type": "box",
+      "position": [
+        8,
+        46,
+        -6
+      ],
+      "size": [
+        8,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p26",
+      "name": "葉3(右)_側小葉2",
+      "type": "box",
+      "position": [
+        8,
+        46,
+        6
+      ],
+      "size": [
+        8,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p27",
+      "name": "葉3(左)_葉柄",
+      "type": "box",
+      "position": [
+        -7,
+        45,
+        0
+      ],
+      "size": [
+        14,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p28",
+      "name": "葉3(左)_先端の小葉",
+      "type": "box",
+      "position": [
+        -19,
+        48,
+        0
+      ],
+      "size": [
+        13,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p29",
+      "name": "葉3(左)_側小葉1",
+      "type": "box",
+      "position": [
+        -8,
+        46,
+        -6
+      ],
+      "size": [
+        8,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p30",
+      "name": "葉3(左)_側小葉2",
+      "type": "box",
+      "position": [
+        -8,
+        46,
+        6
+      ],
+      "size": [
+        8,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p31",
+      "name": "葉4(手前)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        57,
+        7
+      ],
+      "size": [
+        1,
+        1,
+        14
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p32",
+      "name": "葉4(手前)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        60,
+        19
+      ],
+      "size": [
+        9,
+        1,
+        12
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p33",
+      "name": "葉4(手前)_側小葉1",
+      "type": "box",
+      "position": [
+        -6,
+        58,
+        8
+      ],
+      "size": [
+        5,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p34",
+      "name": "葉4(手前)_側小葉2",
+      "type": "box",
+      "position": [
+        6,
+        58,
+        8
+      ],
+      "size": [
+        5,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p35",
+      "name": "葉4(奥)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        57,
+        -7
+      ],
+      "size": [
+        1,
+        1,
+        14
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p36",
+      "name": "葉4(奥)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        60,
+        -19
+      ],
+      "size": [
+        9,
+        1,
+        12
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p37",
+      "name": "葉4(奥)_側小葉1",
+      "type": "box",
+      "position": [
+        -6,
+        58,
+        -8
+      ],
+      "size": [
+        5,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p38",
+      "name": "葉4(奥)_側小葉2",
+      "type": "box",
+      "position": [
+        6,
+        58,
+        -8
+      ],
+      "size": [
+        5,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p39",
+      "name": "葉5(右)_葉柄",
+      "type": "box",
+      "position": [
+        7,
+        69,
+        0
+      ],
+      "size": [
+        13,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p40",
+      "name": "葉5(右)_先端の小葉",
+      "type": "box",
+      "position": [
+        18,
+        72,
+        0
+      ],
+      "size": [
+        11,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p41",
+      "name": "葉5(右)_側小葉1",
+      "type": "box",
+      "position": [
+        8,
+        70,
+        -6
+      ],
+      "size": [
+        7,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p42",
+      "name": "葉5(右)_側小葉2",
+      "type": "box",
+      "position": [
+        8,
+        70,
+        6
+      ],
+      "size": [
+        7,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p43",
+      "name": "葉5(左)_葉柄",
+      "type": "box",
+      "position": [
+        -6,
+        69,
+        0
+      ],
+      "size": [
+        13,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p44",
+      "name": "葉5(左)_先端の小葉",
+      "type": "box",
+      "position": [
+        -17,
+        72,
+        0
+      ],
+      "size": [
+        11,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p45",
+      "name": "葉5(左)_側小葉1",
+      "type": "box",
+      "position": [
+        -8,
+        70,
+        -6
+      ],
+      "size": [
+        7,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p46",
+      "name": "葉5(左)_側小葉2",
+      "type": "box",
+      "position": [
+        -8,
+        70,
+        6
+      ],
+      "size": [
+        7,
+        1,
+        5
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p47",
+      "name": "葉6(手前)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        81,
+        6
+      ],
+      "size": [
+        1,
+        1,
+        12
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p48",
+      "name": "葉6(手前)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        83,
+        17
+      ],
+      "size": [
+        8,
+        1,
+        11
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p49",
+      "name": "葉6(手前)_側小葉1",
+      "type": "box",
+      "position": [
+        -5,
+        81,
+        7
+      ],
+      "size": [
+        5,
+        1,
+        7
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p50",
+      "name": "葉6(手前)_側小葉2",
+      "type": "box",
+      "position": [
+        5,
+        81,
+        7
+      ],
+      "size": [
+        5,
+        1,
+        7
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p51",
+      "name": "葉6(奥)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        81,
+        -6
+      ],
+      "size": [
+        1,
+        1,
+        12
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p52",
+      "name": "葉6(奥)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        83,
+        -16
+      ],
+      "size": [
+        8,
+        1,
+        11
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p53",
+      "name": "葉6(奥)_側小葉1",
+      "type": "box",
+      "position": [
+        -5,
+        81,
+        -7
+      ],
+      "size": [
+        5,
+        1,
+        7
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p54",
+      "name": "葉6(奥)_側小葉2",
+      "type": "box",
+      "position": [
+        5,
+        81,
+        -7
+      ],
+      "size": [
+        5,
+        1,
+        7
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p55",
+      "name": "葉7(右)_葉柄",
+      "type": "box",
+      "position": [
+        6,
+        93,
+        0
+      ],
+      "size": [
+        11,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p56",
+      "name": "葉7(右)_先端の小葉",
+      "type": "box",
+      "position": [
+        15,
+        95,
+        0
+      ],
+      "size": [
+        10,
+        1,
+        7
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p57",
+      "name": "葉7(右)_側小葉1",
+      "type": "box",
+      "position": [
+        7,
+        93,
+        -5
+      ],
+      "size": [
+        6,
+        1,
+        4
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p58",
+      "name": "葉7(右)_側小葉2",
+      "type": "box",
+      "position": [
+        7,
+        93,
+        5
+      ],
+      "size": [
+        6,
+        1,
+        4
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        12
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p59",
+      "name": "葉7(左)_葉柄",
+      "type": "box",
+      "position": [
+        -5,
+        93,
+        0
+      ],
+      "size": [
+        11,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p60",
+      "name": "葉7(左)_先端の小葉",
+      "type": "box",
+      "position": [
+        -15,
+        95,
+        0
+      ],
+      "size": [
+        10,
+        1,
+        7
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p61",
+      "name": "葉7(左)_側小葉1",
+      "type": "box",
+      "position": [
+        -7,
+        93,
+        -5
+      ],
+      "size": [
+        6,
+        1,
+        4
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p62",
+      "name": "葉7(左)_側小葉2",
+      "type": "box",
+      "position": [
+        -7,
+        93,
+        5
+      ],
+      "size": [
+        6,
+        1,
+        4
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        348
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p63",
+      "name": "葉8(手前)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        103,
+        5
+      ],
+      "size": [
+        1,
+        1,
+        10
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p64",
+      "name": "葉8(手前)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        105,
+        14
+      ],
+      "size": [
+        6,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p65",
+      "name": "葉8(手前)_側小葉1",
+      "type": "box",
+      "position": [
+        -5,
+        103,
+        6
+      ],
+      "size": [
+        4,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p66",
+      "name": "葉8(手前)_側小葉2",
+      "type": "box",
+      "position": [
+        5,
+        103,
+        6
+      ],
+      "size": [
+        4,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        348,
+        0,
+        0
+      ],
+      "color": "#3f7d34",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p67",
+      "name": "葉8(奥)_葉柄",
+      "type": "box",
+      "position": [
+        0,
+        103,
+        -5
+      ],
+      "size": [
+        1,
+        1,
+        10
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p68",
+      "name": "葉8(奥)_先端の小葉",
+      "type": "box",
+      "position": [
+        0,
+        105,
+        -13
+      ],
+      "size": [
+        6,
+        1,
+        9
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p69",
+      "name": "葉8(奥)_側小葉1",
+      "type": "box",
+      "position": [
+        -5,
+        103,
+        -6
+      ],
+      "size": [
+        4,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p70",
+      "name": "葉8(奥)_側小葉2",
+      "type": "box",
+      "position": [
+        5,
+        103,
+        -6
+      ],
+      "size": [
+        4,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        12,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p71",
+      "name": "実1",
+      "type": "sphere",
+      "position": [
+        8,
+        33,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 4,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#d63a2f",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p72",
+      "name": "ヘタ1",
+      "type": "cylinder",
+      "position": [
+        8,
+        37,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p73",
+      "name": "果柄1",
+      "type": "box",
+      "position": [
+        4,
+        37,
+        0
+      ],
+      "size": [
+        8,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p74",
+      "name": "実2",
+      "type": "sphere",
+      "position": [
+        0,
+        27,
+        -8
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 4,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#d63a2f",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p75",
+      "name": "ヘタ2",
+      "type": "cylinder",
+      "position": [
+        0,
+        31,
+        -8
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p76",
+      "name": "果柄2",
+      "type": "box",
+      "position": [
+        0,
+        31,
+        -4
+      ],
+      "size": [
+        1,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p77",
+      "name": "実3",
+      "type": "sphere",
+      "position": [
+        -7,
+        36,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 3,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#d63a2f",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p78",
+      "name": "ヘタ3",
+      "type": "cylinder",
+      "position": [
+        -7,
+        39,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p79",
+      "name": "果柄3",
+      "type": "box",
+      "position": [
+        -3,
+        39,
+        0
+      ],
+      "size": [
+        7,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p80",
+      "name": "実4",
+      "type": "sphere",
+      "position": [
+        0,
+        62,
+        8
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 3,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#d63a2f",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p81",
+      "name": "ヘタ4",
+      "type": "cylinder",
+      "position": [
+        0,
+        65,
+        8
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p82",
+      "name": "果柄4",
+      "type": "box",
+      "position": [
+        0,
+        65,
+        4
+      ],
+      "size": [
+        1,
+        1,
+        8
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p83",
+      "name": "実5",
+      "type": "sphere",
+      "position": [
+        7,
+        58,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 3,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#8fb84a",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p84",
+      "name": "ヘタ5",
+      "type": "cylinder",
+      "position": [
+        7,
+        61,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p85",
+      "name": "果柄5",
+      "type": "box",
+      "position": [
+        4,
+        61,
+        0
+      ],
+      "size": [
+        7,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p86",
+      "name": "実6",
+      "type": "sphere",
+      "position": [
+        0,
+        66,
+        -7
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 3,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#8fb84a",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p87",
+      "name": "ヘタ6",
+      "type": "cylinder",
+      "position": [
+        0,
+        69,
+        -7
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p88",
+      "name": "果柄6",
+      "type": "box",
+      "position": [
+        0,
+        69,
+        -3
+      ],
+      "size": [
+        1,
+        1,
+        7
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p89",
+      "name": "実7",
+      "type": "sphere",
+      "position": [
+        -6,
+        86,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#8fb84a",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p90",
+      "name": "ヘタ7",
+      "type": "cylinder",
+      "position": [
+        -6,
+        88,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p91",
+      "name": "果柄7",
+      "type": "box",
+      "position": [
+        -3,
+        88,
+        0
+      ],
+      "size": [
+        6,
+        1,
+        1
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p92",
+      "name": "実8",
+      "type": "sphere",
+      "position": [
+        0,
+        90,
+        6
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 10,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#8fb84a",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p93",
+      "name": "ヘタ8",
+      "type": "cylinder",
+      "position": [
+        0,
+        92,
+        6
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 1,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#2f6b2a",
+      "bone": null,
+      "colorMode": "solid",
+      "radiusTop": 1,
+      "radiusBottom": 2
+    },
+    {
+      "id": "p94",
+      "name": "果柄8",
+      "type": "box",
+      "position": [
+        0,
+        92,
+        3
+      ],
+      "size": [
+        1,
+        1,
+        6
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#5c8f3d",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p95",
+      "name": "花1",
+      "type": "sphere",
+      "position": [
+        3,
+        110,
+        2
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 1,
+      "height": 4,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#f2d03b",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p96",
+      "name": "花2",
+      "type": "sphere",
+      "position": [
+        -3,
+        104,
+        -3
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 1,
+      "height": 4,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#f2d03b",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p97",
+      "name": "花3",
+      "type": "sphere",
+      "position": [
+        2,
+        98,
+        -4
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 1,
+      "height": 4,
+      "segments": 6,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#f2d03b",
+      "bone": null,
+      "colorMode": "solid"
+    },
+    {
+      "id": "p98",
+      "name": "頂芽",
+      "type": "sphere",
+      "position": [
+        0,
+        112,
+        0
+      ],
+      "size": [
+        2,
+        4,
+        2
+      ],
+      "radius": 2,
+      "height": 4,
+      "segments": 8,
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#4f9440",
+      "bone": null,
+      "colorMode": "solid"
+    }
+  ],
+  "bones": [],
+  "animations": [],
+  "unitCm": 1
+}

@@ -158,6 +158,8 @@ export function validateDoc(doc) {
   if (doc.version !== 1) throw new Error('ModelDoc.versionは1にしてください。');
   if (typeof doc.name !== 'string' || !doc.name.trim() || doc.name.length > 100) throw new Error('ModelDoc.nameは1〜100文字の空白だけでない文字列にしてください。');
   if (!integer(doc.grid, 1)) throw new Error('ModelDoc.gridは1〜10000の整数にしてください。');
+  // unitCm: 1単位が実世界で何cmか（任意。未指定は換算なし）。表示とglTF書き出しの既定スケールにだけ使い、形状は整数グリッドのまま。
+  if (doc.unitCm !== undefined && !(Number.isFinite(doc.unitCm) && doc.unitCm >= 0.001 && doc.unitCm <= 100000)) throw new Error('ModelDoc.unitCmは0.001〜100000の数値にしてください。');
   if (!integer(doc.texelsPerUnit, 1, 64)) throw new Error('ModelDoc.texelsPerUnitは1〜64の整数にしてください。');
   if (!Array.isArray(doc.palette) || !doc.palette.length || doc.palette.length > 36) throw new Error('ModelDoc.paletteは1〜36色の配列にしてください。');
   const invalidColorIndex = doc.palette.findIndex(color => typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color));
@@ -228,6 +230,9 @@ export function validateDoc(doc) {
       if (degenerateFaces.length) throw new Error(`${part.name}の面（${degenerateFaces.join(', ')}）が面積0に潰れています。頂点の位置を見直してください。`);
     }
     if (!/^#[0-9a-f]{6}$/i.test(part.color)) throw new Error('色は#rrggbb形式にしてください。');
+    // colorMode: 'solid'＝パーツ色のベタ塗り（textureは保持するが表示・書き出しには使わない）。
+    // 未指定または'texture'＝従来どおり（textureがあればテクスチャ、'.'はパーツ色）。
+    if (part.colorMode !== undefined && !['solid', 'texture'].includes(part.colorMode)) throw new Error('colorModeは"solid"か"texture"にしてください。');
     if (part.texture !== undefined) {
       const expected = textureLayout(part, doc.texelsPerUnit).size;
       const texture = part.texture;
@@ -949,6 +954,32 @@ export function createTeapotSampleDoc() {
     doc.parts.push(part);
   }
   return validateDoc(doc);
+}
+// 単色モード（ベタ塗り）として扱うか。textureが無い、または明示的にsolidなら単色。
+export const isSolidPart = part => part.colorMode === 'solid' || !part.texture;
+// 実際にドットが描かれているか（全面'.'の空テクスチャは単色と見た目が同じ）。
+export const hasPaintedTexture = part => !!part.texture && part.texture.rows.some(row => /[^.]/.test(row));
+// 全パーツのワールド境界（回転を含む8隅の外接箱）。単位表示と書き出し前の確認に使う。
+export function modelExtent(doc) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const part of doc.parts) {
+    const matrix = localTransformMatrix(part);
+    const points = part.type === 'mesh' ? part.vertices : (() => {
+      const { min: low, max: high } = (() => {
+        if (part.type === 'box') return { min: part.size.map(v => -v / 2), max: part.size.map(v => v / 2) };
+        const radius = part.type === 'cylinder' ? Math.max(part.radiusTop ?? part.radius, part.radiusBottom ?? part.radius) : part.radius;
+        const halfY = part.type === 'sphere' ? part.radius : part.type === 'capsule' ? part.height / 2 + part.radius : part.height / 2;
+        return { min: [-radius, -halfY, -radius], max: [radius, halfY, radius] };
+      })();
+      return [0, 1].flatMap(x => [0, 1].flatMap(y => [0, 1].map(z => [[low, high][x][0], [low, high][y][1], [low, high][z][2]])));
+    })();
+    for (const point of points) {
+      const world = transformPoint(matrix, point);
+      for (let axis = 0; axis < 3; axis++) { min[axis] = Math.min(min[axis], world[axis]); max[axis] = Math.max(max[axis], world[axis]); }
+    }
+  }
+  if (!Number.isFinite(min[0])) return null;
+  return { min, max, size: max.map((value, axis) => value - min[axis]) };
 }
 export const serializeDoc = doc => JSON.stringify(validateDoc(doc), null, 2);
 export const deserializeDoc = text => validateDoc(withDefaults(JSON.parse(text)));

@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createNewDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, convertPartToMesh, duplicatePart, estimateMeshConversion, extrudeMeshFace, mergeParts, mirrorPart, moveMeshVertices, resizePartTexture, serializeDoc, deserializeDoc, textureLayout, weldVertices } from './model.js';
+import { PALETTE_CHARS, applyAnimationFrame, cloneDoc, createNewDoc, createSampleDoc, createChestSampleDoc, createTeapotSampleDoc, createPart, createBone, convertPartToMesh, duplicatePart, estimateMeshConversion, extrudeMeshFace, mergeParts, mirrorPart, modelExtent, moveMeshVertices, resizePartTexture, serializeDoc, deserializeDoc, textureLayout, weldVertices } from './model.js';
 import { CommandHistory } from './commands.js';
 import { createViewport } from './viewport.js';
 import { connectMcpBridge } from './bridge.js';
 import { validateModelReport } from './model-validation.js';
 import { VERSION_FOOTER } from './version.js';
+import { buildGlb, glbFileName } from './gltf-export.js';
 const $ = selector => document.querySelector(selector);
 // どのビルドを見ているか識別するための版文字列(git commit時刻+ハッシュ由来。
 // 生成は tools/update-version.mjs、詳細は src/version.js / tools/version.mjs 参照)。
@@ -57,6 +58,7 @@ function refresh() {
   viewport?.setVertexSelection(selectedVertices);
   updateFaceUi();
   $('#part-count').textContent = `${doc.parts.length} 個`;
+  updateUnitUi();
   $('#merge-parts').disabled = selectedIds.length < 2;
   const paletteKey = JSON.stringify(doc.palette);
   if (paletteKey !== renderedPalette) {
@@ -114,7 +116,15 @@ function refresh() {
   if (!part) return;
   $('#part-name').value = part.name;
   $('#part-bone').value = part.bone ?? '';
-  $('#part-color').value = part.color; $('#color-value').textContent = part.color;
+  $('#part-color').value = part.color; $('#part-color-hex').value = part.color;
+  $('#part-color-mode').value = part.colorMode === 'solid' ? 'solid' : 'texture';
+  $('#solid-palette').replaceChildren(...doc.palette.map(color => {
+    const button = document.createElement('button'); button.type = 'button'; button.style.backgroundColor = color;
+    button.setAttribute('aria-label', `単色を${color}にする`); button.title = color;
+    button.setAttribute('aria-pressed', String(part.colorMode === 'solid' && part.color.toLowerCase() === color.toLowerCase()));
+    button.addEventListener('click', () => execute({ type: 'setSolidColor', partId: part.id, color }, part.id, `単色を${color}にしました。`));
+    return button;
+  }));
   const isFrustum = part.type === 'cylinder' && (part.radiusTop !== undefined || part.radiusBottom !== undefined);
   const fieldVisibility = { box: part.type === 'box', cylinder: part.type === 'cylinder' && !isFrustum, frustum: isFrustum, sphere: part.type === 'sphere', capsule: part.type === 'capsule', mesh: part.type === 'mesh' };
   for (const [name, visible] of Object.entries(fieldVisibility)) { $(`#${name}-fields`).hidden = !visible; $(`#${name}-fields`).disabled = !visible; }
@@ -764,6 +774,12 @@ $('#properties-form').addEventListener('change', event => {
   if (!input.checkValidity()) { input.reportValidity(); refresh(); status('入力値を確認してください。数値は整数のみです。', true); return; }
   if (input.id === 'part-name') execute({ type: 'rename', partId: part.id, name: input.value });
   else if (input.id === 'part-color') execute({ type: 'setColor', partId: part.id, color: input.value });
+  else if (input.id === 'part-color-hex') {
+    const value = input.value.trim().toLowerCase();
+    if (!/^#[0-9a-f]{6}$/.test(value)) { refresh(); status('色は#RRGGBB形式で入力してください。', true); return; }
+    execute({ type: part.colorMode === 'solid' ? 'setColor' : 'setSolidColor', partId: part.id, color: value });
+  }
+  else if (input.id === 'part-color-mode') execute({ type: 'setColorMode', partId: part.id, mode: input.value }, part.id, input.value === 'solid' ? '単色（ベタ塗り）にしました。' : 'テクスチャモードにしました。');
   else if (input.id === 'part-bone') execute({ type: 'assignPartBone', partId: part.id, boneId: input.value || null });
   else if (input.dataset.vector) {
     const key = input.dataset.vector;
@@ -800,6 +816,48 @@ $('#file-input').addEventListener('change', async event => {
   } catch (error) { status(`読込できませんでした：${error.message}`, true); }
   finally { event.target.value = ''; }
 });
+function updateUnitUi() {
+  const unitInput = $('#unit-cm');
+  if (document.activeElement !== unitInput) unitInput.value = doc.unitCm ?? '';
+  const gridSelect = $('#grid-step');
+  if (![...gridSelect.options].some(option => Number(option.value) === doc.grid)) gridSelect.append(new Option(String(doc.grid), String(doc.grid)));
+  gridSelect.value = String(doc.grid);
+  const extent = modelExtent(doc);
+  if (!extent) { $('#extent-info').textContent = ''; return; }
+  const [w, h, d] = extent.size.map(value => Number(value.toFixed(1)));
+  const real = doc.unitCm ? `（約 ${[w, h, d].map(value => formatLength(value * doc.unitCm)).join(' × ')}）` : '';
+  $('#extent-info').textContent = `全体 ${w}×${h}×${d} 単位${real}`;
+}
+function formatLength(cm) { return cm >= 100 ? `${(cm / 100).toFixed(2).replace(/\.?0+$/, '')}m` : `${Number(cm.toFixed(1))}cm`; }
+$('#unit-cm').addEventListener('change', event => {
+  const text = event.target.value.trim();
+  execute({ type: 'setUnit', unitCm: text === '' ? null : Number(text) }, selectedId, text === '' ? '単位換算を解除しました。' : `1単位＝${text}cmにしました。`);
+});
+$('#grid-step').addEventListener('change', event => execute({ type: 'setGrid', grid: Number(event.target.value) }, selectedId, `移動・リサイズの刻みを${event.target.value}単位にしました。`));
+document.querySelectorAll('[data-render-style]').forEach(button => button.addEventListener('click', () => {
+  viewport?.setRenderStyle(button.dataset.renderStyle);
+  document.querySelectorAll('[data-render-style]').forEach(other => other.setAttribute('aria-pressed', String(other === button)));
+  status(button.dataset.renderStyle === 'smooth' ? 'なめらか表示にしました（ウィンドウ解像度・アンチエイリアス）。' : 'ドット表示（384×216）にしました。');
+}));
+$('#export-glb').addEventListener('click', () => {
+  try {
+    const { glb, stats } = buildGlb(doc);
+    const url = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+    const link = document.createElement('a'); link.href = url; link.download = glbFileName(doc);
+    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const unit = doc.unitCm ? `1単位＝${doc.unitCm}cm（メートル換算）` : '換算なし（1単位＝1）';
+    status(`glTFを書き出しました：${stats.parts}パーツ・${stats.triangles}三角形・テクスチャ${stats.textures}枚。${unit}`);
+  } catch (error) { status(`glTFを書き出せませんでした：${error.message}`, true); }
+});
+function exportGltfForBridge(args) {
+  const options = {};
+  if (args.metersPerUnit !== undefined) options.metersPerUnit = args.metersPerUnit;
+  if (args.vertexColors !== undefined) options.vertexColors = args.vertexColors;
+  const { glb, stats } = buildGlb(doc, options);
+  let binary = '';
+  for (let offset = 0; offset < glb.length; offset += 0x8000) binary += String.fromCharCode(...glb.subarray(offset, offset + 0x8000));
+  return { base64: btoa(binary), fileName: glbFileName(doc), stats };
+}
 function applyBridgeCommands(commands) {
   if (playing) stopPlayback();
   doc = history.executeBatch(doc, commands);
@@ -827,7 +885,13 @@ function renderBridgePreview(args) {
     if (args.frame < 0 || args.frame >= animation.length) throw new Error(`frameは0〜${animation.length - 1}で指定してください。`);
     previewDoc = applyAnimationFrame(doc, animation.id, args.frame, THREE);
   }
-  return { base64: viewport.renderPreview(args, previewDoc), width: 384, height: 216 };
+  const options = { ...args };
+  if (args.resolution !== undefined) {
+    const match = /^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/.exec(String(args.resolution));
+    if (!match) throw new Error('resolutionは"1024x768"の形式で指定してください。');
+    options.width = Number(match[1]); options.height = Number(match[2]);
+  }
+  return viewport.renderPreview(options, previewDoc);
 }
 try {
   viewport = createViewport($('#viewport'), $('#canvas-host'), select, commitTransform, previewTransform, {
@@ -849,6 +913,7 @@ try {
     create_from_spec: args => replaceFromBridge(args.model),
     validate_model: () => validateModelReport(doc),
     render_preview: renderBridgePreview,
+    export_gltf: exportGltfForBridge,
   }, $('#mcp-status'));
 }
 catch (error) {

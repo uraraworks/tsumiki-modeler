@@ -1,0 +1,12 @@
+{
+  "name": "tsumiki-modeler",
+  "private": true,
+  "type": "module",
+  "description": "つみきモデラー。アプリ本体はビルド不要。このpackage.jsonはNodeでのテストとサンプル生成（three）専用",
+  "scripts": {
+    "test": "node tests/version.mjs && node tests/mesh.mjs && node tests/model-texture.mjs && node tests/vertex-edit.mjs && node tests/solid-color-unit.mjs && node tests/gltf-export.mjs"
+  },
+  "devDependencies": {
+    "three": "0.169.0"
+  }
+}

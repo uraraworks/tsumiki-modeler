@@ -4,6 +4,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { WebSocketServer } from 'ws';
 import { z } from 'zod';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 const BRIDGE_PORT = Number(process.env.TSUMIKI_BRIDGE_PORT) || 3099;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -88,6 +90,14 @@ const COMMAND_DESCRIPTION = `コマンド配列を順番に既存applyCommandへ
   meshパーツの指定した面（faces:part.faces内のインデックス配列、複数指定可、各面を個別にその法線方向へ押し出す）を、1グリッド単位でdistanceだけ法線方向へ押し出します。負のdistanceで内側へ凹ませられます。distance=0は何もしません（コマンドとして発行しても履歴に積まれません）。元の面は新しい位置の面に置き換わり、辺ごとに側面の四角形が追加されます（四角形1面につき頂点+4・面+4）。頂点は複製され、常に整数座標を保ちます。テクスチャは面の対応関係から可能な限り引き継ぎ、新しくできた側面・移動後の面のうち対応の無い部分は未指定（.）で埋まります。
 - {type:"moveVertices", partId:string, vertexIndices:number[], delta:[x,y,z]}
   meshパーツの指定した頂点（vertexIndices:part.vertices内のインデックス配列、複数指定可）を全て同じ整数delta（1グリッド単位）だけ平行移動します。delta=[0,0,0]は何もしません（コマンドとして発行しても履歴に積まれません）。移動後も頂点座標は常に整数です。頂点を含む面の実寸（footprint）が変わった場合、その面のUVアトラス領域を作り直します。既存のテクスチャ内容は左上基準でできる範囲だけ引き継ぎ、はみ出す分は失われます（結果のpixelsLostで判定可）。移動によって面が面積0（頂点の重なりや一直線上の並び）に潰れる場合はコマンド全体がエラーになり適用されません。四角形の面が非平面になる（4頂点が同一平面上に無い）ほど頂点を動かすと、UVは最初の3頂点で決まる平面への近似展開になり歪みます。
+- {type:"setColorMode", partId:string, mode:"solid"|"texture"}
+  パーツの塗り方を切り替えます。"solid"＝パーツ色(color)のベタ塗り（テクスチャは保持したまま表示・glTF書き出しでは使わない）、"texture"＝従来どおり（textureがあればテクスチャ、'.'はパーツ色）。paintPixelsでsolidのパーツに描くと自動でtextureへ切り替わります。addPartのpartに colorMode:"solid" を指定すると、テクスチャを作らず最初から単色で作れます。
+- {type:"setSolidColor", partId:string, color:"#rrggbb"}
+  色を指定して単色モードにします（setColor+setColorMode:"solid"。パレット外の任意の#RRGGBBも可）。
+- {type:"setUnit", unitCm:number|null}
+  ModelDoc.unitCm（1単位が実世界で何cmか。0.001〜100000）を設定します。nullで換算なし。表示とexport_gltfの既定スケールに使い、形状は整数グリッドのままです（例：unitCm=1で高さ120単位＝1.2m）。
+- {type:"setGrid", grid:number}
+  移動・リサイズのスナップ刻み（単位数の整数、1以上）。
 - {type:"addBone", bone:{id?,name?,parent?,position?,rotation?}}
   idは未指定時にb1,b2,...から空き番号を採番。name="ボーン N", parent=null, position=[0,0,0]（parent指定時は[0,2,0]）, rotation=[0,0,0]。
 - {type:"removeBone", boneId:string}
@@ -109,7 +119,25 @@ server.tool('create_from_spec', '完全なModelDocで現在モデルを丸ごと
 server.tool('validate_model', '現在のModelDocをvalidateDocで検査します。エラーとは別に、未割当パーツ、未使用パレット色、名前重複、左右名（左/右・_l/_r）の不揃いを警告として返します。', {}, async () =>
   withBridge(async () => jsonText(await sendCommand('validate_model'))));
 
-server.tool('render_preview', '現在モデルだけを384x216 PNGで描画します。cameraでfront（+Z）/side（+X）/back（-Z）/top（+Y）/isoを指定でき、省略時はisoで全パーツが約10%の余白付きで収まる距離へ自動調整します。方位角・仰角（度）・距離も指定でき、frame指定時はアニメーション姿勢を描画します。ボーン、ギズモ、グリッドは描画せず、編集中のカメラも変更しません。', {
+server.tool('export_gltf', '現在モデルを静的メッシュのglTF 2.0バイナリ(.glb)として書き出します。パーツごとに1ノード（ノード名＝パーツ名）、位置・回転は頂点へ焼き込み済み(ワールド座標)。単色パーツは頂点カラーCOLOR_0(リニア)、ドットを描いたテクスチャ付きパーツはPNGテクスチャを埋め込みます。ボーン・アニメーションは出力しません。pathを指定するとそのパスへ保存し(親ディレクトリは自動作成)、省略するとbase64を返します。metersPerUnit省略時はModelDoc.unitCm/100、それも無ければ1単位=1mです。', {
+  path: z.string().optional().describe('保存先の絶対パスまたはMCPサーバーのカレントからの相対パス(.glb)。省略時はbase64で返す。'),
+  meters_per_unit: z.number().positive().optional().describe('1単位が何メートルか(例: 0.01=1単位1cm)。省略時はdoc.unitCm/100、未設定なら1。'),
+  vertex_colors: z.boolean().optional().describe('falseにすると頂点カラーを出さず、マテリアルのbaseColorFactorにパーツ色を入れる。既定true。'),
+}, async ({ path, meters_per_unit, vertex_colors }) => withBridge(async () => {
+  const result = await sendCommand('export_gltf', { metersPerUnit: meters_per_unit, vertexColors: vertex_colors });
+  if (typeof result?.base64 !== 'string') throw new Error('ブラウザからglbデータが返されませんでした。');
+  if (path) {
+    const target = resolve(path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, Buffer.from(result.base64, 'base64'));
+    return jsonText({ savedTo: target, fileName: result.fileName, stats: result.stats });
+  }
+  return jsonText({ fileName: result.fileName, stats: result.stats, mimeType: 'model/gltf-binary', base64: result.base64 });
+}));
+
+server.tool('render_preview', '現在モデルだけをPNGで描画します（既定は384x216のドット表示）。cameraでfront（+Z）/side（+X）/back（-Z）/top（+Y）/isoを指定でき、省略時はisoで全パーツが約10%の余白付きで収まる距離へ自動調整します。方位角・仰角（度）・距離も指定でき、frame指定時はアニメーション姿勢を描画します。ボーン、ギズモ、グリッドは描画せず、編集中のカメラも変更しません。resolution("1024x768"など)とstyle("pixel"既定/"smooth")で高解像度のなめらか表示も撮れます。smoothは2倍スーパーサンプリングでアンチエイリアスし、トゥーンと輪郭線(解像度に応じて1〜2px相当)は維持します。pixelはresolutionを384x216の整数倍に丸めてニアレストで拡大します。', {
+  resolution: z.string().regex(/^\s*\d+\s*[xX×]\s*\d+\s*$/).optional().describe('出力解像度 "幅x高さ"（16〜4096、合計1600万画素まで）。既定 "384x216"。'),
+  style: z.enum(['pixel', 'smooth']).optional().describe('pixel=384x216ドット表示(既定)、smooth=アンチエイリアス付き高解像度。'),
   camera: z.enum(['front', 'side', 'back', 'top', 'iso']).optional().describe('カメラプリセット。既定はiso。数値指定は同じ軸だけ上書きします。'),
   preset: z.enum(['front', 'side', 'back', 'top', 'iso']).optional().describe('後方互換用のcamera別名。cameraが優先されます。'),
   azimuth: z.number().optional().describe('モデル中心から見た方位角（度）。0は正面（+Z）、90は側面（+X）。'),
@@ -118,11 +146,11 @@ server.tool('render_preview', '現在モデルだけを384x216 PNGで描画し�
   fit: z.boolean().optional().describe('省略した距離の自動調整。既定はtrue。false時の既定距離は30。'),
   animation_id: z.string().optional().describe('frameを描画するアニメーションID。省略時は先頭のアニメーション。'),
   frame: z.number().int().optional().describe('描画するアニメーションのフレーム番号。'),
-}, async ({ camera, preset, azimuth, elevation, distance, fit, animation_id, frame }) => withBridge(async () => {
-  const result = await sendCommand('render_preview', { camera, preset, azimuth, elevation, distance, fit, animationId: animation_id, frame });
+}, async ({ resolution, style, camera, preset, azimuth, elevation, distance, fit, animation_id, frame }) => withBridge(async () => {
+  const result = await sendCommand('render_preview', { resolution, style, camera, preset, azimuth, elevation, distance, fit, animationId: animation_id, frame });
   if (typeof result?.base64 !== 'string') throw new Error('ブラウザからPNGデータが返されませんでした。');
   return { content: [
-    { type: 'text', text: '384x216 PNG preview' },
+    { type: 'text', text: `${result.width}x${result.height} PNG preview (${result.style ?? 'pixel'})` },
     { type: 'image', data: result.base64, mimeType: 'image/png' },
   ] };
 }));
