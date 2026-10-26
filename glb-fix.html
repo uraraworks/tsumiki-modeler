@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>つみき GLB修正モード</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cg stroke='%23211d1d' stroke-width='1.35' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath fill='%2370c982' d='M8 11l6 3.5L8 18l-6-3.5z'/%3E%3Cpath fill='%234da965' d='M2 14.5L8 18v7l-6-3.5z'/%3E%3Cpath fill='%23347c4c' d='M14 14.5L8 18v7l6-3.5z'/%3E%3Cpath fill='%236faee8' d='M20 11l6 3.5-6 3.5-6-3.5z'/%3E%3Cpath fill='%234d8fca' d='M14 14.5l6 3.5v7l-6-3.5z'/%3E%3Cpath fill='%23356da8' d='M26 14.5L20 18v7l6-3.5z'/%3E%3Cpath fill='%23ef6a67' d='M14 2.5l6.5 3.75L14 10 7.5 6.25z'/%3E%3Cpath fill='%23c94f50' d='M7.5 6.25L14 10v7.5l-6.5-3.75z'/%3E%3Cpath fill='%239f3f45' d='M20.5 6.25L14 10v7.5l6.5-3.75z'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./src/style.css">
+  <link rel="stylesheet" href="./src/glb-fix/glb-fix.css">
+  <script type="importmap">
+    {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}
+  </script>
+  <script type="module" src="./src/glb-fix/main.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title-row">
+      <h1>つみき</h1>
+      <span class="app-badge">GLB修正モード</span>
+    </div>
+    <p class="app-tagline">TripoAIなどで作ったGLBの欠けた角やテクスチャを直す画面です（<a href="./index.html">通常のモデラーへ戻る</a>）</p>
+  </header>
+  <main>
+    <section class="workspace" aria-label="GLB修正画面">
+      <div class="view-heading">
+        <span>3D ビュー</span>
+        <div class="outline-switch" id="shading-switch" role="group" aria-label="表示">
+          <button type="button" data-shading="texture" aria-pressed="true">テクスチャ</button>
+          <button type="button" data-shading="toon" aria-pressed="false">トゥーン</button>
+          <button type="button" data-shading="clay" aria-pressed="false">形だけ</button>
+        </div>
+        <label class="inline-check"><input id="show-wireframe" type="checkbox">ワイヤー</label>
+        <label class="inline-check"><input id="show-points" type="checkbox" checked>頂点</label>
+        <span id="model-info" class="model-info">GLB未読込</span>
+      </div>
+      <div id="viewport"><div id="canvas-host"></div><div id="drop-hint" class="drop-hint">ここへ .glb をドロップするか、「GLB読込」から開いてください</div><div id="select-rect" class="select-rect" hidden></div></div>
+      <p class="view-help" id="view-help"></p>
+      <nav class="toolbar" aria-label="編集ツール">
+        <button id="mode-select" class="mode-button" aria-pressed="true">頂点選択 (V)</button><button id="mode-paint" class="mode-button" aria-pressed="false">ペイント (P)</button>
+        <span class="divider"></span><button id="undo" disabled>元に戻す</button><button id="redo" disabled>やり直す</button>
+        <span class="divider"></span><button id="load" class="primary">GLB読込</button><button id="export" disabled>GLB書出</button>
+      </nav>
+      <p id="status" role="status"></p>
+    </section>
+    <aside>
+      <section id="select-panel">
+        <h2>頂点 <span id="selection-count">0 個選択</span></h2>
+        <label>選択の半径（0＝クリックした頂点だけ）<div class="range-row"><input id="select-radius" type="range" min="0" max="0.1" step="0.002" value="0"><output id="select-radius-value">0</output></div></label>
+        <label class="inline-check"><input id="select-backfaces" type="checkbox">範囲選択で裏側の頂点も選ぶ</label>
+        <div class="button-row"><button id="clear-selection" type="button">選択解除</button><button id="grow-selection" type="button" title="選択頂点とつながっている頂点を1段ぶん足します">選択を広げる</button></div>
+
+        <fieldset><legend>移動</legend>
+          <p class="note">ビュー上の矢印をドラッグします。刻みを入れると、その幅で止まります。</p>
+          <label>刻み<input id="move-snap" type="number" min="0" step="0.001" value="0"></label>
+          <div class="triple"><label>X<input id="nudge-x" type="number" step="0.001" value="0"></label><label>Y<input id="nudge-y" type="number" step="0.001" value="0"></label><label>Z<input id="nudge-z" type="number" step="0.001" value="0"></label></div>
+          <button id="nudge-apply" type="button">数値ぶん動かす</button>
+        </fieldset>
+
+        <fieldset><legend>平面に揃える</legend>
+          <p class="note">選んだ頂点の座標を1つの値にそろえて、凹んだ角や波打った壁を真っすぐにします。</p>
+          <div class="outline-switch" id="flatten-axis" role="group" aria-label="揃える軸">
+            <button type="button" data-axis="0" aria-pressed="true">X</button><button type="button" data-axis="1" aria-pressed="false">Y</button><button type="button" data-axis="2" aria-pressed="false">Z</button>
+          </div>
+          <label>基準<select id="flatten-mode"><option value="max">最大（外側へ出す）</option><option value="min">最小</option><option value="average">平均</option><option value="first">最初に選んだ頂点</option></select></label>
+          <label>値<input id="flatten-value" type="number" step="0.0001"></label>
+          <button id="flatten-apply" type="button" class="primary">揃える</button>
+        </fieldset>
+      </section>
+
+      <section id="paint-panel" hidden>
+        <h2>ペイント</h2>
+        <div class="outline-switch" id="paint-tool" role="group" aria-label="ペイントの道具">
+          <button type="button" data-tool="brush" aria-pressed="true">筆</button><button type="button" data-tool="stamp" aria-pressed="false">スタンプ</button><button type="button" data-tool="eyedropper" aria-pressed="false">スポイト</button>
+        </div>
+        <p class="note" id="paint-note"></p>
+        <label>色<div class="color-row"><input id="paint-color" type="color" value="#e8c890"><output id="paint-color-hex">#e8c890</output></div></label>
+        <label>太さ（テクスチャの画素）<div class="range-row"><input id="brush-size" type="range" min="1" max="64" step="1" value="8"><output id="brush-size-value">8</output></div></label>
+        <label>濃さ<div class="range-row"><input id="brush-opacity" type="range" min="0.05" max="1" step="0.05" value="0.6"><output id="brush-opacity-value">0.60</output></div></label>
+        <label>ふち<div class="range-row"><input id="brush-hardness" type="range" min="0" max="1" step="0.05" value="0.5"><output id="brush-hardness-value">0.50</output></div></label>
+        <h3 class="sub-heading">テクスチャ</h3>
+        <canvas id="texture-preview" class="texture-preview" aria-label="テクスチャ全体"></canvas>
+        <p class="note">塗った場所が赤い枠で出ます。UVの切れ目をまたぐ太い筆は、隣の島まで塗ることがあるので気をつけてください。</p>
+      </section>
+    </aside>
+  </main>
+  <footer class="app-footer">
+    <a href="https://www.urara-works.jp/" target="_blank" rel="noopener">© URARA-works</a> /
+    <a href="https://github.com/uraraworks/tsumiki-modeler" target="_blank" rel="noopener">GitHubで見る</a>
+  </footer>
+  <input id="file-input" type="file" accept=".glb,model/gltf-binary" hidden>
+</body>
+</html>
