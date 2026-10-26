@@ -77,6 +77,7 @@ header.app-header .app-tagline {
   margin: 2px 0 0;
   color: var(--header-tagline-text);
 }
+header.app-header .app-tagline a { color: #f0bf78; }
 
 main {
   display: grid;

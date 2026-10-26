@@ -1,0 +1,27 @@
+/* GLB修正モード専用の追加スタイル。基本は src/style.css を共有する。 */
+.inline-check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; letter-spacing: 0; }
+.inline-check input { width: auto; margin: 0; }
+aside .inline-check { margin: 10px 0; }
+.model-info { margin-left: auto; white-space: nowrap; letter-spacing: 0; }
+#canvas-host canvas { image-rendering: auto; }
+#canvas-host canvas.paint-mode { cursor: crosshair; }
+.drop-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #8492a0; pointer-events: none; text-align: center; padding: 20px; }
+#viewport.dragover { outline: 2px dashed #f0bf78; outline-offset: -6px; }
+.select-rect { position: absolute; border: 1px dashed #ffd074; background: rgba(255, 208, 116, .12); pointer-events: none; }
+.range-row { display: flex; align-items: center; gap: 8px; }
+.range-row input { margin: 6px 0 0; padding: 0; }
+.range-row output { width: 44px; color: #d0d8df; font-size: 11px; }
+.button-row { display: flex; gap: 6px; margin: 8px 0; }
+.button-row button { flex: 1; padding: 7px 5px; }
+legend { color: #e4e8ed; font-size: 12px; letter-spacing: .1em; margin-bottom: 8px; }
+fieldset { border-top: 1px solid #39414a; padding-top: 14px; }
+fieldset button { margin-top: 8px; width: 100%; }
+fieldset .outline-switch button { width: auto; margin-top: 0; flex: 1; }
+.triple { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.note { color: #8fa0ae; font-size: 11px; line-height: 1.5; margin: 6px 0; }
+.color-row { display: flex; align-items: center; gap: 8px; }
+.sub-heading { font-size: 12px; letter-spacing: .1em; margin: 18px 0 8px; }
+.texture-preview { width: 100%; height: auto; border: 1px solid #353e48; image-rendering: auto; }
+#paint-tool { margin-bottom: 8px; }
+#paint-tool button { flex: 1; }
+#paint-color { width: 55px; height: 34px; padding: 3px; margin-top: 0; }
